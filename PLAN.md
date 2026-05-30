@@ -124,12 +124,10 @@ This is where VPN clients usually break, so the contract is explicit.
   memory-kill the extension. So `vm/` **derives** `ConnectionState` from OS status events, never
   optimistically. One-way flow: extension → OS status → app observes → snapshot → UI.
 - **Two binaries on Apple.** App and NE extension are separate processes with no shared heap:
-    - `bind/app` → `config/` + `store/` + `vm/`;
-    - `bind/ext` → `tunnel/` + secret/profile read **only**.
-
-        Keeping parsing/validation/vm out of the extension is the lever for the iOS cap (§3.3): profiles
-        are validated **app-side at save time**; the extension consumes a minimal validated blob. On
-        Android/Windows both sets compile into one process — the boundary is logical.
+  `bind/app` links `config/` + `store/` + `vm/`; `bind/ext` links `tunnel/` + secret/profile read
+  **only**. Keeping parsing/validation/vm out of the extension is the lever for the iOS cap (§3.3):
+  profiles are validated **app-side at save time**; the extension consumes a minimal validated
+  blob. On Android/Windows both sets compile into one process — the boundary is logical.
 
 - **The extension is self-sufficient.** On autoconnect/on-demand the OS may start it with the app
   not running; it reads the active profile (App Group) and secret (Keychain) itself. The app is
@@ -249,14 +247,15 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
   ships (`runtime.GOOS` reports `ios` on tvOS, distinguished at runtime; their Go fork helps but
   isn't required). So tvOS = a manual `c-archive`→xcframework build, not research. Real blockers:
   the extra build rig and no camera (QR → manual entry). Deferred for sequencing, not capability.
-- **Apple account** — individual, no org available (from user). App Store VPN publishing requires
-  **organization** enrollment (Guideline 5.4), which needs a real **legal entity** + D-U-N-S (no
-  DBAs/sole-proprietors). Options: an **LLC/company** (simple, pays the $99/yr) or a **non-profit**
-  (also valid; a _free_ app gets the fee waived and a privacy tool is a legitimate mission, but
-  more governance). Gates only iOS/tvOS **store release** — not development or the Phase-2 spike
-  (the individual account + NE entitlement cover those), and macOS can ship Developer-ID-notarized
-  with no entity. Verify feasibility in-jurisdiction. `[Decision: LLC vs non-profit vs
-macOS-only-for-now — deferred until the core works.]`
+- **Store publishing needs an org entity — for _both_ Apple and Google.** The Apple App Store
+  (Guideline 5.4) and Google Play both require **organization** enrollment + D-U-N-S to publish a
+  VPN; an individual account cannot (user has only an individual Apple account, no org). One legal
+  entity covers both stores — an **LLC** (simple, pays the fees) or a **non-profit** (also valid;
+  Apple waives the fee for a free app, but more governance). **Off-store routes need no entity:**
+  macOS Developer-ID-notarized, Android via APK/F-Droid/third-party stores, Windows outside the
+  Microsoft Store — **only the iOS/tvOS App Store has no individual path**. Gates release only, not
+  development or the Phase-2 spike. Verify in-jurisdiction (tax residency may create obligations
+  regardless). `[Decision deferred until the core works.]`
 - **App Store Guideline 5.4** — use NEVPNManager; the privacy policy must commit to no third-party
   data sale/disclosure; declare data collection before use; some territories need a VPN license in
   review notes. Our no-telemetry stance (§7) covers the data clause.
