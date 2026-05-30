@@ -1,6 +1,6 @@
 # Hysteria UI — Architecture & Plan
 
-Native Hysteria 2 **client** apps over a **shared Go core** (model + view-model); only the UI is
+Native Hysteria 2 **client** apps over a **shared Go core** (the app **Model** — all state + logic); only the UI is
 platform-specific. Build macOS first, then iOS/iPadOS, Android/Android TV, and Windows.
 _(Goal, scope, platforms: from user.)_
 
@@ -36,22 +36,25 @@ connect/disconnect a system-wide TUN.
 ## 2. Architecture
 
 ```text
-                Shared Go core (one codebase, bound per platform)
-   ┌────────────────────────────────────────────────────────────────┐
-   │  config/   profile model, hysteria2:// parse + validate        │
-   │  store/    profile store: JSON doc + SecureStore for secrets   │
-   │  tunnel/   system netstack (apernet/sing-tun) + core/client    │
-   │  vm/       AppModel: state + stats snapshots + intents         │
-   │  bind/     app + ext facades; flat, binding-safe (JSON + cb)   │
-   └────────────────────────────────────────────────────────────────┘
+                Shared Go core (one module, bound per platform)
+   ┌─────────────────────────────────────────────────────────────────┐
+   │   internal/  (rich Go — hidden from native & external imports): │
+   │     profile/  parsed hysteria2:// profile (struct + JSON)       │
+   │     config/   hysteria2:// parse + validate   (app-only)        │
+   │     store/    JSON doc + SecureStore (secrets)                  │
+   │     tunnel/   system netstack + core/client   (ext-only)        │
+   │     app/      Model: serialized actor — snapshots + intents     │
+   │     errkind/  connect-error enum (leaf)                         │
+   │   bind/  app + ext facades — flat, binding-safe (JSON + cb)     │
+   └─────────────────────────────────────────────────────────────────┘
         │ gomobile xcframework        │ gomobile .aar       │ c-shared DLL
         ▼ (Apple)                     ▼ (Android)           ▼ (Windows)
    SwiftUI Views                 Compose Views          WinUI/.NET Views
    (macOS/iOS/iPadOS)            (AndroidTV too)        (Windows)
 ```
 
-MVVM with the **Model and ViewModel in Go**. The View is the only platform-specific layer: it renders
-a state snapshot from the Go `AppModel` and sends back user intents — no business logic in
+**Model–View** with the **Model in Go**. The native View is the only platform-specific layer: it renders
+a state snapshot from the Go `app.Model` and sends back user intents — no business logic in
 Swift/Kotlin/C#. State flows one way: tunnel → OS → app observes → snapshot → UI (§4).
 
 ---
@@ -102,15 +105,19 @@ The Go runtime + Hysteria + the netstack must fit the NE extension's hard memory
 (Apple Dev Forums; Xray-core #4422) — so **design to 15 MB** and treat 50 MB as an unreliable
 ceiling. Choosing the **system stack over gVisor (§3.2) removes the single biggest memory consumer**;
 the remaining weight is the Go runtime + quic-go buffers, not a userspace TCP/IP stack. Still tight,
-so mitigate with GC tuning (`debug.SetMemoryLimit` ≈ 12 MB) and by linking only the minimal subset
-into the extension (§4). iOS is the constraint; macOS's cap is generous — so measure this first (§6,
+so mitigate with GC tuning (`debug.SetMemoryLimit` ≈ 12 MB, set **only in the extension's entry
+point** — a separate process on Apple; on Android/Windows the single shared process must not be
+throttled that low) and by linking only the minimal subset into the extension (§4). iOS is the constraint; macOS's cap is generous — so measure this first (§6,
 Phase 2). `[Confirm the live ceiling on target devices in the spike.]`
 
 ### 3.4 Binding surface is flat
 
 gomobile / c-shared export only primitives, `[]byte`, `error`, exported structs (by reference), and
 native-implemented callback interfaces — no generics, maps, or rich slices. So `bind/` is flat:
-primitives + JSON strings for complex objects + an observer interface. All richness stays behind it.
+primitives + JSON strings for complex objects + an observer interface; all richness stays behind it
+(under `internal/`, §5). The surface needs **two ABI adapters, not one**: `gomobile bind` wants Go
+interfaces/structs, while the Windows **c-shared** build is a C ABI (`//export` funcs, a handle
+table, C-function-pointer callbacks) — see `bind/cshared` (§5).
 
 ### 3.5 Secrets live in platform-native secure storage
 
@@ -139,18 +146,25 @@ This is where VPN clients usually break, so the contract is explicit.
 
 - **The OS owns connection state.** `NEVPNStatus` / `VpnService` / the Windows service is
   authoritative — the user can toggle the VPN from OS settings, and the OS can tear it down or
-  memory-kill the extension. So `vm/` **derives** `ConnectionState` from OS status events, never
+  memory-kill the extension. So `app/` **derives** `ConnectionState` from OS status events, never
   optimistically. One-way flow: extension → OS status → app observes → snapshot → UI.
-- **Two binaries on Apple.** App and NE extension are separate processes with no shared heap:
-  `bind/app` links `config/` + `store/` + `vm/`; `bind/ext` links `tunnel/` + secret/profile read
-  **only**. Keeping parsing/validation/vm out of the extension is the lever for the iOS cap (§3.3):
-  profiles are validated **app-side at save time**; the extension consumes a minimal validated blob.
-  On Android/Windows both sets compile into one process — the boundary is logical.
+- **Two binaries on Apple — a structural wall, not a convention.** App and NE extension are separate
+  processes with no shared heap. All rich Go lives under `core/internal/` (hidden from native and
+  external importers), and the two binding packages link **disjoint** subsets: `bind/app` →
+  `internal/{profile, config, store, app}`; `bind/ext` → `internal/{profile, store (read), tunnel,
+errkind}` **only** — never `config` (the parser) or `app` (the state machine). Keeping
+  parsing/validation/app out of the extension is the lever for the iOS cap (§3.3): profiles are
+  validated **app-side at save time**, and the extension consumes a minimal validated blob — a
+  serialized `profile.Profile`, deserialized **without** linking the parser (that's why the struct
+  lives in its own `profile` leaf, apart from `config`). A CI gate (`go list -deps ./bind/ext`)
+  **fails the build** if an app-only package leaks in — the linker's dead-code elimination is not a
+  guarantee to bet a hard memory cap on. On Android/Windows both subsets compile into one process —
+  there the boundary is logical, but the import graph stays identical so the wall still holds.
 - **The extension is self-sufficient.** On autoconnect/on-demand the OS may start it with the app not
   running; it reads the active profile (App Group) and secret (Keychain) itself. The app is never on
   the connect path.
 - **Concurrency.** gomobile calls Go from arbitrary native threads; Go callbacks fire on a goroutine.
-  So `AppModel` is a **serialized actor** (one goroutine draining an intent channel); intents are
+  So `app.Model` is a **serialized actor** (one goroutine draining an intent channel); intents are
   non-blocking and return immediately; results surface only via the observer; native callbacks may
   arrive on any thread and must be marshaled to the UI thread.
 
@@ -160,52 +174,81 @@ This is where VPN clients usually break, so the contract is explicit.
 
 ```text
 hysteria-ui/
-  core/                 # shared Go module; gomobile/c-shared bindable
-    go.mod              # require apernet/hysteria/core; replace -> ../../hysteria/core (dev)
-    config/             # Profile{} ; ParseURI(hysteria2://) ; Validate ; ToClientConfig()
-    store/              # profile store; JSON doc at a container path + SecureStore for secrets
-    tunnel/             # system netstack (apernet/sing-tun) + core/client; status/stats callbacks
-    vm/                 # AppModel: serialized actor; state + stats snapshots; intents
-    bind/
-      app/              # facade for the app process: config + store + vm (full surface)
-      ext/              # facade for the extension: tunnel + secret/profile read ONLY
-  apple/                # Xcode workspace
-  android/              # Gradle (later)
-  windows/              # .NET/WinUI (later)
+  core/                   # one Go module; only bind/* are gomobile/c-shared bound
+    go.mod                # require apernet/hysteria/core; replace -> ../../hysteria/core (dev)
+    internal/             # all rich Go — unreachable from native and external importers
+      profile/            # parsed hysteria2:// profile: struct + JSON + ClientConfig(); imports core/client, NO parser (ext-linkable)
+      config/             # ParseURI(hysteria2://) + Validate -> profile.Profile; the untrusted-input parser (app-only)
+      store/              # profile store: JSON doc + secrets; SecureStore interface DEFINED here
+      tunnel/             # system netstack (apernet/sing-tun) + core/client from profile.Profile (ext-only)
+      app/                # app.Model: serialized actor; state + stats snapshots; intents (app-only)
+      errkind/            # connect-error enum; zero deps; produced in ext, relayed to app
+    bind/                 # the gomobile/c-shared binding boundary; flat, binding-safe (§3.4)
+      app/                # full surface: imports internal/{profile, config, store, app}
+      ext/                # tunnel + read-only profile/secret ONLY: internal/{profile, store, tunnel, errkind}
+      cshared/            # (Windows) cgo //export shim + handle table over bind/{app, ext}
+  apple/                  # Xcode workspace
+  android/                # Gradle (later)
+  windows/                # .NET/WinUI (later)
   PLAN.md
 ```
 
-- **config/** — port hysteria's `hysteria2://` logic (`parseURI` `client.go:518`, `URI()` `:474`,
-  plus `app/internal/url/url.go` for port-hopping); don't import the `app` module (drags
-  cobra/viper) — copy and trim. Emits `*client.Config` via the CLI's fillers
-  (TLS/QUIC/auth/bandwidth/obfs incl. `obfsGecko`). Runs app-side at save time (§4). As it parses
-  untrusted input, it ships a **golden-corpus + fuzz test** and an upstream-sync procedure;
-  upstreaming a stable package is the long-term fix.
-- **store/** — `Profile{id, name, parsedFields, createdAt}`, add/delete/list only. `id` = UUID;
-  **dedup by normalized URI**; `name` from the link's `#fragment`, else host. Non-secret metadata →
-  one JSON doc written atomically by Go to a platform container path; secret → `SecureStore` (§3.5).
-  **No SQLite:** a tiny ordered list needs no SQL engine, which would bloat the iOS extension and risk
-  cross-process file-lock corruption. (`modernc.org/sqlite` is the escape hatch if real queries ever
-  appear.)
-- **tunnel/** — `apernet/sing-tun` **system** netstack (§3.2) bridged to
-  `core/client.NewReconnectableClient` via a near-verbatim copy of hysteria's `tunHandler`; linked
-  only into the extension. `core/client` has **no byte counters** (`Client` is `TCP`/`UDP`/`Close`,
-  `client.go:26`; `HandshakeInfo.Tx` is handshake bandwidth, not live traffic), so `tunnel/` counts
-  traffic at a wrapping `client.ConnFactory`.
-- **vm/** — serialized `AppModel`.
-  - State: `[]Profile`, `selectedID`, OS-derived `ConnectionState`, `lastError`.
-  - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
-  - One on-demand **query** `ExportProfileURI(id) → []byte` for the share view: it reads the link from
-    `SecureStore` only when the user opens share, returns it as `[]byte` (not a snapshot field), and
-    **never** places the URI in any state snapshot — snapshots stay secret-free (§7).
-  - **Two output channels, never merged:** discrete state snapshots, and throttled stats.
-  - `lastError` is a mapped enum (`authFailed | serverUnreachable | tlsPinMismatch | timeout |
-    unknown`) from `core/errors` → one actionable UI sentence, no diagnostics screen (reconciles the
-    minimal UI of §1 with the no-telemetry rule of §7).
-- **bind/** — two entry points: `bind/app NewApp(containerPath, secure SecureStore)` and
-  `bind/ext NewTunnel(...)`; `Subscribe(StateObserver)` + `SubscribeStats(...)`, implemented
-  natively. A multi-consumer contract (three UIs) → **additive-only, versioned**; every snapshot
+- **`profile/` + `config/`** (split on purpose). `profile.Profile` is the parsed connection profile
+  — **struct + JSON + a `ClientConfig() *client.Config`** mapper (the TLS/QUIC/auth/bandwidth/obfs
+  fillers, incl. `obfsGecko`); it imports `core/client` but **no parser**, so the extension can hold
+  a validated blob and build a client **without** linking the URI parser. `config/` ports hysteria's
+  `hysteria2://` logic (`parseURI` `client.go:518`, `URI()` `:474`, plus `app/internal/url/url.go`
+  for port-hopping) into `config.Parse`/`config.Validate` → `profile.Profile`; don't import the
+  `app` module (drags cobra/viper) — copy and trim. It runs **app-side at save time** (§4) and is
+  **app-only**. As it parses untrusted input it ships a **golden-corpus + fuzz test** and an
+  upstream-sync procedure; upstreaming a stable package is the long-term fix.
+- **`store/`** — `store.Entry{ID, Name, CreatedAt, Link profile.Profile}` (the stored record holds a
+  parsed profile; named `Entry`, **not** a second `Profile`), add/delete/list only. `ID` = UUID;
+  **dedup by normalized URI**; `Name` from the link's `#fragment`, else host. Non-secret metadata →
+  one JSON doc written atomically by Go to a platform container path; secret → `SecureStore`. The
+  **`SecureStore` interface is defined here** (consumer-side, Go idiom — `get/set/delete`,
+  native-implemented, passed in at construction; §3.5); the extension uses the read-only slice, so
+  `store` stays its sole consumer (no separate `secure/` package). **No SQLite:** a tiny ordered list
+  needs no SQL engine, which would bloat the iOS extension and risk cross-process file-lock
+  corruption. (`modernc.org/sqlite` is the escape hatch if real queries ever appear.)
+- **`tunnel/`** — `apernet/sing-tun` **system** netstack (§3.2) bridged to
+  `core/client.NewReconnectableClient` via a near-verbatim copy of hysteria's `tunHandler`; builds
+  the client from `profile.Profile.ClientConfig()`; **ext-only**. `core/client` has **no byte
+  counters** (`Client` is `TCP`/`UDP`/`Close`, `client.go:26`; `HandshakeInfo.Tx` is handshake
+  bandwidth, not live traffic), so `tunnel/` counts traffic at a wrapping `client.ConnFactory`. It
+  maps connect failures (`core/errors`) into the `errkind` enum **here in the extension** and
+  surfaces the int via its callback — the rich error never crosses the boundary, so the server
+  address can't leak (§7.6).
+- **`errkind/`** — a dependency-free leaf owning the connect-error enum (`authFailed |
+serverUnreachable | tlsPinMismatch | timeout | unknown`). Lives apart from `app` because it's
+  produced in the **extension** (which must not link `app`) and relayed up; both `tunnel` and `app`
+  import it, neither imports the other.
+- **`app/`** — serialized `app.Model` (the "Model" of Model–View; the package is named for its
+  capability, the live app state machine). Imports `config`, `store`, `errkind`, `profile` — **never
+  `tunnel`** (connect is driven through the OS, §4).
+    - State: `[]store.Entry`, `selectedID`, OS-derived `ConnectionState` (owned here), `lastError` (an
+      `errkind` value).
+    - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
+    - One on-demand **query** `ExportProfileURI(id) → []byte` for the share view: it reads the link from
+      `SecureStore` only when the user opens share, returns it as `[]byte` (not a snapshot field), and
+      **never** places the URI in any state snapshot — snapshots stay secret-free (§7).
+    - **Two output channels, never merged:** discrete state snapshots, and throttled stats.
+    - `lastError` maps to one actionable UI sentence, no diagnostics screen (reconciles the minimal UI
+      of §1 with the no-telemetry rule of §7).
+- **`bind/`** — the binding boundary; the **only** non-`internal` packages, the only ones
+  `gomobile bind` / c-shared export. Two entry points: `bind/app NewApp(containerPath, secure
+SecureStore)` and `bind/ext NewTunnel(...)`. The native-implemented observer interfaces
+  (`StateObserver`, `SubscribeStats`) are **declared in `bind/*`** (not in `app`) — gomobile
+  generates the native stubs from the bound package's signatures, and `app` stays decoupled behind
+  Go-native channels. `bind/cshared` adds the Windows C-ABI wrappers (handle table, C-function-pointer
+  callbacks). A multi-consumer contract (three UIs) → **additive-only, versioned**; every snapshot
   carries a `schemaVersion`.
+
+**Import DAG (must stay acyclic):** `profile` and `errkind` are sinks (imported widely; `profile`
+imports only `core/client`, `errkind` imports nothing). `config → profile`; `store → profile`;
+`tunnel → profile, errkind`; `app → config, store, errkind, profile` (never `tunnel`); `bind/app →
+app, store, config`; `bind/ext → tunnel, store, errkind`. `bind/ext` must never reach `config` or
+`app` — the `go list -deps` CI gate (§4) enforces it.
 
 Link entry is native text input — the universal add path (incl. Android TV). QR **scanning** is an
 optional native shortcut only where a camera exists (camera → string → `AddProfileFromURI`). QR
@@ -219,14 +262,17 @@ optional native shortcut only where a camera exists (camera → string → `AddP
 1. **Bootstrap the binding** — `core/` with `replace → ../../hysteria/core`; build a trivial
    xcframework (`-target ios,iossimulator,macos`) and call Go from an empty SwiftUI app.
 2. **Memory spike (de-risk first)** — throwaway NE tunnel on a **real iPhone**: system stack + client
-   + one hardcoded profile, no UI. Measure RSS against the cap, and confirm the system stack actually
-   runs in the NE sandbox (local listener + fd writes; §3.2). If it doesn't fit, the architecture
-   changes (§3.3) — so learn it now. Needs the entitlement in hand.
-3. **Config + store** — port parsing into `config/` with fuzz + corpus tests; `store/` over a
-   container path + `SecureStore`, with dev stubs.
-4. **ViewModel + macOS UI (mocked tunnel)** — `vm/` + `bind/app`; SwiftUI list / add (text entry) /
-   share (link + Copy + QR) / delete / select / connect — nothing else (§1).
-5. **Real tunnel on macOS** — `tunnel/` in `bind/ext`; NE extension; App Group + Keychain;
+    - one hardcoded profile, no UI. Measure RSS against the cap, and confirm the system stack actually
+      runs in the NE sandbox (local listener + fd writes; §3.2). If it doesn't fit, the architecture
+      changes (§3.3) — so learn it now. Needs the entitlement in hand. **Also the one-module-vs-two
+      decision point:** if `internal/` + dead-code elimination don't keep the ext footprint down, split
+      the bindings into separate modules — until then, one module (§5).
+3. **Config + store** — port the parser into `internal/config` (→ `profile.Profile`) with fuzz +
+   corpus tests; `internal/store` over a container path + `SecureStore`, with dev stubs; add the
+   `go list -deps ./bind/ext` CI gate (§4).
+4. **Model + macOS UI (mocked tunnel)** — `internal/app` + `bind/app`; SwiftUI list / add (text
+   entry) / share (link + Copy + QR) / delete / select / connect — nothing else (§1).
+5. **Real tunnel on macOS** — `internal/tunnel` in `bind/ext`; NE extension; App Group + Keychain;
    `ConnectionState` from `NEVPNStatus` (§4); status/stats IPC. Hidden defaults: full-tunnel route,
    autoconnect last profile.
 6. **Add-link UX + share** — native text entry (the universal path, incl. Android TV) + optional QR
@@ -251,9 +297,9 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
    userinfo); a custom CA is config-file-only, so `pinSHA256` is the only secure path for self-signed
    servers via a link. `pinSHA256` pins the end-entity cert even when `insecure=1` (`fillTLSConfig`,
    `client.go:359`). So:
-   - **accept `insecure=1` only with a `pinSHA256`** (that is cert pinning, stronger than CA trust);
-   - **reject `insecure=1` without a pin** (a MITM downgrade);
-   - accept plain CA-verified links.
+    - **accept `insecure=1` only with a `pinSHA256`** (that is cert pinning, stronger than CA trust);
+    - **reject `insecure=1` without a pin** (a MITM downgrade);
+    - accept plain CA-verified links.
 4. **Explicit import & share** — a `hysteria2://` deep link or clipboard never auto-saves; adding
    always needs confirmation. Sharing is **user-initiated only**: no background or automatic clipboard
    writes, but an explicit **Copy** in the share view is allowed, with mitigations — the clipboard
@@ -297,9 +343,9 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
 
 - `core/client/client.go:26` — `Client` interface (`TCP`/`UDP`/`Close`).
 - `core/client/config.go`, `core/client/reconnect.go` — `Config` + `NewReconnectableClient`.
-- `app/cmd/client.go:72` — full client config schema (mirror in `config/Profile`).
-- `app/cmd/client.go:474` / `:518` — `URI()` / `parseURI` (the `hysteria2://` logic to port).
-- `app/internal/url/url.go` — custom URL parser (port-hopping); copy into `config/`.
+- `app/cmd/client.go:72` — full client config schema (mirror in `profile.Profile` + its fillers).
+- `app/cmd/client.go:474` / `:518` — `URI()` / `parseURI` (the `hysteria2://` logic to port into `config`).
+- `app/internal/url/url.go` — custom URL parser (port-hopping); copy into `internal/config`.
 - `app/internal/tun/server.go:79` — `tun.NewSystem` (the system stack we keep); `:105`/`:143` —
   `tunHandler.NewConnection`/`NewPacketConnection` (→ `HyClient.TCP`/`UDP`), reuse near-verbatim.
 - `apernet/sing-tun/stack_system.go` — system stack: `clashtcpip` headers + local listener + NAT,
