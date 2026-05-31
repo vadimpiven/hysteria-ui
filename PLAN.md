@@ -8,11 +8,13 @@ _(Goal, scope, platforms: from user.)_
 there's a camera), share a profile (show its link with a Copy button + a QR code), delete a profile,
 connect/disconnect a system-wide TUN.
 
-**Upstream:** sibling repo `../hysteria`; we consume `apernet/hysteria/core/v2/client` and the same
-`apernet/sing-tun` hysteria pins (its **system** stack — no gVisor; §3.2). Pinned versions:
+**Upstream:** sibling repo `../hysteria` — we consume **only** `apernet/hysteria/core/v2/client`
+(MIT). The TUN netstack is **Outline SDK** (`golang.getoutline.org/sdk`, Apache-2.0) — *not*
+`apernet/sing-tun`, which is GPL-3.0 and would foreclose the iOS App Store (§3.7). Pinned versions:
 
-- hysteria `c3a806b`
-- `apernet/sing-tun v0.2.6-0.20250920121535-299f04629986` (`app/go.mod:11`)
+- hysteria `c3a806b` (core module only)
+- `golang.getoutline.org/sdk` (Apache-2.0) — its `network` + `network/lwip2transport` (§3.2); pin at integration
+- `eycorsican/go-tun2socks v1.16.11` (transitive via Outline — Go wrapper MIT, lwIP C core BSD-3)
 - `apernet/quic-go v0.59.1-0.20260425001925-6c6cc9bcb716` (`core/go.mod:8`)
 
 ---
@@ -42,7 +44,7 @@ connect/disconnect a system-wide TUN.
    │     profile/  parsed hysteria2:// profile (struct + JSON)       │
    │     config/   hysteria2:// parse + validate   (app-only)        │
    │     store/    JSON doc + SecureStore (secrets)                  │
-   │     tunnel/   system netstack + core/client   (ext-only)        │
+   │     tunnel/   Outline lwIP netstack + core/client (ext-only)    │
    │     app/      Model: serialized actor — snapshots + intents     │
    │     errkind/  connect-error enum (leaf)                         │
    │   bind/  app + ext facades — flat, binding-safe (JSON + cb)     │
@@ -71,44 +73,54 @@ Each OS hands the tunnel a file descriptor, or (Windows) the core opens the adap
 | Android / Android TV | `VpnService.establish()` → `ParcelFileDescriptor` | **fd**                 |
 | Windows              | **Wintun** adapter (kernel driver)                | core opens it directly |
 
-`sing-tun` exposes `Options.FileDescriptor` (`tun.go:65`, used in `tun_darwin.go:52`), so the core
-runs the whole netstack + client from a handed-in fd.
+Outline's netstack consumes a `network.IPDevice` — a plain `Read`/`Write`/`Close` over raw IP
+packets (`network/device.go:33`). On Apple/Android we wrap the handed-in **fd** as an `IPDevice`
+and `io.Copy` it against the lwIP device (§3.2); on Windows we open the **Wintun** adapter via
+permissive Go bindings (e.g. WireGuard's `wintun`, MIT) and wrap *that* as an `IPDevice`. No
+privileged route/iptables work lives in the core — the OS (Apple `NEPacketTunnelNetworkSettings`,
+Android `VpnService`) or the app (Windows service) sets routes.
 
-### 3.2 System netstack (apernet/sing-tun), on every platform
+### 3.2 Userspace netstack: Outline SDK lwIP, on every platform
 
-A TUN yields raw IP packets; a netstack turns them into connections. `sing-tun` offers two
-(`stack.go:36`):
+A TUN yields raw IP packets; a netstack turns them into connections. We use **Outline SDK**'s
+netstack (`golang.getoutline.org/sdk`, Apache-2.0) — Google Jigsaw's, shipping in production VPN
+clients — instead of `apernet/sing-tun`. The driver is **licensing** (§3.7): `sing-tun` is GPL-3.0;
+Outline's stack and its dependencies are permissive (Apache-2.0 / MIT / BSD-3), so the binary stays
+App-Store-eligible.
 
-- **gVisor** — a userspace TCP/IP stack. The apernet fork hysteria pins **omits it**
-  (`stack_gvisor_stub.go`: `WithGVisor = false`, no real `stack_gvisor.go`).
-- **system** — what hysteria's CLI uses (`tun.NewSystem`, `server.go:79`).
+Under the hood it is **lwIP** — a fully-userspace embedded C TCP/IP stack via
+`eycorsican/go-tun2socks` (no raw sockets, no route table, no iptables; just the fd + outbound
+dials, all permitted in the iOS NE sandbox). The bridge is one call:
 
-**The system stack is also fully userspace — not kernel reinjection** (verified in
-`stack_system.go`). It parses headers with `internal/clashtcpip`, opens a **local listener** on the
-TUN gateway address, redirects TCP via a NAT table (`tcpNat`) and UDP via `udpnat`, then dials out
-through the `Handler`. It uses **no raw sockets, no route table, no iptables** — only the utun **fd**,
-a localhost listener, and outbound dials, all permitted in the iOS NE sandbox. (On desktop,
-route/`autoRoute` setup is the privileged part — but that's the _app's_ job, separate from the stack;
-on Apple `NEPacketTunnelNetworkSettings` does it instead.) It's exactly sing-box's non-gVisor option,
-which ships on iOS.
+```go
+lwip2transport.ConfigureDevice(sd transport.StreamDialer, pp network.PacketProxy) (network.IPDevice, error)
+```
 
-**Decision: the system stack everywhere.** Keep the `apernet/sing-tun` hysteria already pins (no fork
-swap to `sagernet/sing-tun`, no `sagernet/gvisor` dependency); it's also far lighter than gVisor on
-the iOS NE memory cap (§3.3). Bridge to `core/client` by **reusing hysteria's `tunHandler` almost
-verbatim** (`NewConnection → HyClient.TCP`, `NewPacketConnection → HyClient.UDP`; `server.go:105`/`:143`).
-`[The one thing source can't prove is live NE-sandbox behavior of the listener + fd writes — the Phase-2 spike (§6) validates it, now on a much lighter stack.]`
+— it returns an `IPDevice` we `io.Copy` against the platform TUN fd (§3.1). We supply `sd`/`pp` by
+**adapting `core/client` onto Outline's open transport interfaces** (our own code, §5) — the same
+glue hysteria's `tunHandler` does, but re-derived onto a permissive interface instead of copied from
+GPL code:
+
+- `transport.StreamDialer.DialStream(ctx, raddr)` → `client.Client.TCP(raddr)` (`client.go:27`)
+- `network.PacketProxy` session → `client.Client.UDP()` (`HyUDPConn.Send`/`Receive`, `client.go:28,32`)
+
+Two caveats: lwIP is **C, so the core now links cgo** (standard for NE / gomobile / c-shared, but it
+shapes the build), and lwIP is a **process-wide singleton** — one tunnel at a time, which a
+single-VPN client never exceeds.
+`[The one thing source can't prove is live NE-sandbox behavior of lwIP + fd writes — the Phase-2 spike (§6) validates it.]`
 
 ### 3.3 iOS NE memory is the gate
 
 The Go runtime + Hysteria + the netstack must fit the NE extension's hard memory cap. The cap rose to
 **50 MB in iOS 15**, but recent reports (iPhone 14 Pro Max, iOS 17.3.1) show kills above **~15 MB**
 (Apple Dev Forums; Xray-core #4422) — so **design to 15 MB** and treat 50 MB as an unreliable
-ceiling. Choosing the **system stack over gVisor (§3.2) removes the single biggest memory consumer**;
-the remaining weight is the Go runtime + quic-go buffers, not a userspace TCP/IP stack. Still tight,
-so mitigate with GC tuning (`debug.SetMemoryLimit` ≈ 12 MB, set **only in the extension's entry
-point** — a separate process on Apple; on Android/Windows the single shared process must not be
-throttled that low) and by linking only the minimal subset into the extension (§4). iOS is the constraint; macOS's cap is generous — so measure this first (§6,
-Phase 2). `[Confirm the live ceiling on target devices in the spike.]`
+ceiling. **lwIP (§3.2) is an embedded C stack designed for KB-scale RAM**, so the netstack is the
+*lightest* of the options (far below gVisor; lighter than sing-tun's system stack); the dominant
+weight is the Go runtime + quic-go buffers, not the TCP/IP stack. Still tight, so mitigate with GC
+tuning (`debug.SetMemoryLimit` ≈ 12 MB, set **only in the extension's entry point** — a separate
+process on Apple; on Android/Windows the single shared process must not be throttled that low) and
+by linking only the minimal subset into the extension (§4). iOS is the constraint; macOS's cap is
+generous — so measure this first (§6, Phase 2). `[Confirm the live ceiling on target devices in the spike.]`
 
 ### 3.4 Binding surface is flat
 
@@ -137,6 +149,36 @@ The dev plaintext stub is build-tag gated and never shipped.
 Use a NE Packet Tunnel (sandboxed, App-Store-eligible, **same code as iOS**) rather than a privileged
 launchd helper (no App Store, you own privilege escalation). Needs the Network Extensions entitlement
 (a paid account suffices to build/test; org only for App Store — §8).
+
+### 3.7 Licensing constrains the netstack (the reason for §3.2)
+
+The distributed binary's license is set by its heaviest-copyleft link, and a Go binary statically
+links everything. The pieces:
+
+- `apernet/hysteria/core` — **MIT**; the client is a clean, maintainer-blessed library import.
+- `golang.getoutline.org/sdk` — **Apache-2.0**; `go-tun2socks` wrapper **MIT**, lwIP C core **BSD-3**.
+- `apernet/sing-tun` — **GPL-3.0**. Linking it makes the whole binary a combined GPL-3.0 work on
+  distribution, widely held **incompatible with the Apple App Store** (the VLC precedent; FSF's
+  standing position). sing-box ships on the App Store only because its author *is* sing-tun's
+  copyright holder and self-grants — a third party is bound.
+
+So the netstack choice **is** the App-Store-eligibility choice: Outline's permissive lwIP keeps the
+iOS path open (§8); sing-tun would close it. This also matches hysteria's maintainers' on-record
+stance — depend on `core` (MIT) as a library, and the `app` module is MIT to copy *except the TUN
+feature*, the carve-out being precisely sing-tun's GPL (PR `apernet/hysteria#996`). The full runtime
+tree is otherwise permissive (MIT / Apache-2.0 / BSD-3) — **no GPL/LGPL/MPL once sing-tun is out** —
+so our own code is free to take any license (it does: dual `Apache-2.0 OR MIT`, `LICENSE-*` at root).
+`[Not legal advice — confirm with counsel before release.]`
+
+### 3.8 cgo on every build path
+
+lwIP is C (§3.2), so anything linking `tunnel/` links **cgo** — every *extension* target needs a C
+toolchain and a configured cross-compile in CI: the Apple xcframework (clang, device + simulator
+slices), the Android `.aar` (NDK clang), the Windows c-shared DLL (mingw-w64 or MSVC). Standard for
+gomobile / c-shared (every TUN client links cgo), but it rules out `CGO_ENABLED=0` and shapes the CI
+runners. Useful asymmetry: `core/client` and the whole `bind/app` subset are **cgo-free** (pure-Go
+quic-go) — only `bind/ext` pulls C in. So the app process builds without a C toolchain; only the
+extension needs one, reinforcing the two-binary wall (§4).
 
 ---
 
@@ -180,7 +222,7 @@ hysteria-ui/
       profile/            # parsed hysteria2:// profile: struct + JSON + ClientConfig(); imports core/client, NO parser (ext-linkable)
       config/             # ParseURI(hysteria2://) + Validate -> profile.Profile; the untrusted-input parser (app-only)
       store/              # profile store: JSON doc + secrets; SecureStore interface DEFINED here
-      tunnel/             # system netstack (apernet/sing-tun) + core/client from profile.Profile (ext-only)
+      tunnel/             # Outline lwIP netstack (cgo) + core/client adapter from profile.Profile (ext-only)
       app/                # app.Model: serialized actor; state + stats snapshots; intents (app-only)
       errkind/            # connect-error enum; zero deps; produced in ext, relayed to app
     bind/                 # the gomobile/c-shared binding boundary; flat, binding-safe (§3.4)
@@ -211,14 +253,16 @@ hysteria-ui/
   `store` stays its sole consumer (no separate `secure/` package). **No SQLite:** a tiny ordered list
   needs no SQL engine, which would bloat the iOS extension and risk cross-process file-lock
   corruption. (`modernc.org/sqlite` is the escape hatch if real queries ever appear.)
-- **`tunnel/`** — `apernet/sing-tun` **system** netstack (§3.2) bridged to
-  `core/client.NewReconnectableClient` via a near-verbatim copy of hysteria's `tunHandler`; builds
-  the client from `profile.Profile.ClientConfig()`; **ext-only**. `core/client` has **no byte
-  counters** (`Client` is `TCP`/`UDP`/`Close`, `client.go:26`; `HandshakeInfo.Tx` is handshake
-  bandwidth, not live traffic), so `tunnel/` counts traffic at a wrapping `client.ConnFactory`. It
-  maps connect failures (`core/errors`) into the `errkind` enum **here in the extension** and
-  surfaces the int via its callback — the rich error never crosses the boundary, so the server
-  address can't leak (§7.6).
+- **`tunnel/`** — Outline SDK's **lwIP** netstack (§3.2) bridged to
+  `core/client.NewReconnectableClient` via **our own adapter** (not copied from hysteria): a
+  `transport.StreamDialer` wrapping `client.TCP` and a `network.PacketProxy` wrapping `client.UDP`,
+  handed to `lwip2transport.ConfigureDevice`, with an `io.Copy` loop against the platform fd (§3.1).
+  Builds the client from `profile.Profile.ClientConfig()`; links **cgo** (lwIP is C); **ext-only**.
+  `core/client` has **no byte counters** (`Client` is `TCP`/`UDP`/`Close`, `client.go:26`;
+  `HandshakeInfo.Tx` is handshake bandwidth, not live traffic), so `tunnel/` counts traffic **in the
+  adapter** (wrapping the `StreamConn` + packet sessions). It maps connect failures (`core/errors`)
+  into the `errkind` enum **here in the extension** and surfaces the int via its callback — the rich
+  error never crosses the boundary, so the server address can't leak (§7.6).
 - **`errkind/`** — a dependency-free leaf owning the connect-error enum (`authFailed |
 serverUnreachable | tlsPinMismatch | timeout | unknown`). Lives apart from `app` because it's
   produced in the **extension** (which must not link `app`) and relayed up; both `tunnel` and `app`
@@ -261,9 +305,9 @@ optional native shortcut only where a camera exists (camera → string → `AddP
 
 1. **Bootstrap the binding** — `core/` with `replace → ../../hysteria/core`; build a trivial
    xcframework (`-target ios,iossimulator,macos`) and call Go from an empty SwiftUI app.
-2. **Memory spike (de-risk first)** — throwaway NE tunnel on a **real iPhone**: system stack + client
-    - one hardcoded profile, no UI. Measure RSS against the cap, and confirm the system stack actually
-      runs in the NE sandbox (local listener + fd writes; §3.2). If it doesn't fit, the architecture
+2. **Memory spike (de-risk first)** — throwaway NE tunnel on a **real iPhone**: lwIP stack + client
+    - one hardcoded profile, no UI. Measure RSS against the cap, and confirm lwIP + cgo actually
+      run in the NE sandbox (fd read/write loop; §3.2). If it doesn't fit, the architecture
       changes (§3.3) — so learn it now. Needs the entitlement in hand. **Also the one-module-vs-two
       decision point:** if `internal/` + dead-code elimination don't keep the ext footprint down, split
       the bindings into separate modules — until then, one module (§5).
@@ -272,9 +316,9 @@ optional native shortcut only where a camera exists (camera → string → `AddP
    `go list -deps ./bind/ext` CI gate (§4).
 4. **Model + macOS UI (mocked tunnel)** — `internal/app` + `bind/app`; SwiftUI list / add (text
    entry) / share (link + Copy + QR) / delete / select / connect — nothing else (§1).
-5. **Real tunnel on macOS** — `internal/tunnel` in `bind/ext`; NE extension; App Group + Keychain;
-   `ConnectionState` from `NEVPNStatus` (§4); status/stats IPC. Hidden defaults: full-tunnel route,
-   autoconnect last profile.
+5. **Real tunnel on macOS** — `internal/tunnel` (hysteria→Outline adapter, §5) in `bind/ext`; NE
+   extension; App Group + Keychain; `ConnectionState` from `NEVPNStatus` (§4); status/stats IPC.
+   Hidden defaults: full-tunnel route, autoconnect last profile.
 6. **Add-link UX + share** — native text entry (the universal path, incl. Android TV) + optional QR
    scanner where there's a camera; per-profile **share view**: show the link with a Copy button
    (clipboard marked sensitive / local-only / auto-expiring; §7.4) + its QR (`qr.go`).
@@ -311,8 +355,9 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
    sensitive — show it only on an explicit, user-driven screen.
 5. **No telemetry** — zero analytics / third-party SDKs.
 6. **Logging** — release builds redact link, auth, and server address at the logger.
-7. **Supply chain** — pin every dependency (see header); we add **no new netstack** — `sing-tun` is
-   the same `apernet` fork hysteria already vets. Prefer reproducible builds.
+7. **Supply chain & licensing** — pin every dependency (see header). The netstack is **Outline SDK**
+   (Apache-2.0, Google Jigsaw, production-shipped), deliberately **not** `apernet/sing-tun` (GPL-3.0,
+   App-Store-incompatible; §3.7). All links are permissive (MIT / Apache / BSD). Prefer reproducible builds.
 8. **Distribution & least privilege** — sign + notarize on Apple, requesting only NE / App-Group /
    Keychain entitlements; signed non-debuggable Android release; Authenticode-signed Windows DLL +
    installer over the Microsoft-signed Wintun driver.
@@ -321,8 +366,11 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
 
 ## 8. Open questions & release gates
 
-- **iOS NE memory** — design to **~15 MB**; the Go runtime + quic-go are now the weight (the system
-  stack dropped gVisor, §3.2), but it stays the top risk, measured in the Phase-2 device spike (§3.3).
+- **iOS NE memory** — design to **~15 MB**; the Go runtime + quic-go are the weight (lwIP is a tiny
+  embedded stack, §3.2), but it stays the top risk, measured in the Phase-2 device spike (§3.3).
+- **Netstack license (resolved, keep verified)** — the App-Store path depends on the netstack staying
+  permissive: Outline lwIP (Apache / MIT / BSD), never `sing-tun` (GPL-3.0). A CI license-scan on
+  `bind/ext`'s dep tree should fail on any GPL ingress (§3.7). `[Confirm with counsel before release.]`
 - **Store publishing needs an org entity — for _both_ Apple and Google.** The Apple App Store
   (Guideline 5.4) and Google Play both require **organization** enrollment + D-U-N-S to publish a VPN;
   an individual account cannot (user has only an individual Apple account, no org). One legal entity
@@ -335,19 +383,32 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
 - **App Store Guideline 5.4** — use NEVPNManager; the privacy policy must commit to no third-party
   data sale/disclosure; declare data collection before use; some territories need a VPN license in
   review notes. Our no-telemetry stance (§7) covers the data clause.
+- **Acknowledgements bundle** — generate a third-party-notices screen at build time (union of every
+  dependency's notice: Apache `NOTICE`, MIT/BSD copyright lines), e.g. via `go-licenses`. A
+  distribution duty independent of our own `LICENSE-*` (§3.7); app-store reviewers expect it.
 - **Profile schema** — version from day one for migration (design choice).
 
 ---
 
-## 9. Reference points (`../hysteria`)
+## 9. Reference points
 
-- `core/client/client.go:26` — `Client` interface (`TCP`/`UDP`/`Close`).
+**`../hysteria` (MIT):**
+
+- `core/client/client.go:26` — `Client` interface (`TCP`/`UDP`/`Close`); `:32` — `HyUDPConn`
+  (`Receive`/`Send`/`Close`). The two surfaces our Outline adapter wraps (§3.2, §5).
 - `core/client/config.go`, `core/client/reconnect.go` — `Config` + `NewReconnectableClient`.
 - `app/cmd/client.go:72` — full client config schema (mirror in `profile.Profile` + its fillers).
 - `app/cmd/client.go:474` / `:518` — `URI()` / `parseURI` (the `hysteria2://` logic to port into `config`).
-- `app/internal/url/url.go` — custom URL parser (port-hopping); copy into `internal/config`.
-- `app/internal/tun/server.go:79` — `tun.NewSystem` (the system stack we keep); `:105`/`:143` —
-  `tunHandler.NewConnection`/`NewPacketConnection` (→ `HyClient.TCP`/`UDP`), reuse near-verbatim.
-- `apernet/sing-tun/stack_system.go` — system stack: `clashtcpip` headers + local listener + NAT,
-  fully userspace (no raw sockets / routes / iptables).
+- `app/internal/url/url.go` — custom URL parser (port-hopping); copy into `internal/config` (MIT).
+- `app/internal/tun/server.go:105`/`:143` — `tunHandler.NewConnection`/`NewPacketConnection`
+  (→ `HyClient.TCP`/`UDP`); **reference only** — we re-derive this glue onto Outline's interfaces,
+  not copy it (the file links GPL sing-tun; §3.7).
 - `app/internal/utils/qr.go` — QR generation for share/export.
+
+**Outline SDK `golang.getoutline.org/sdk` (Apache-2.0):**
+
+- `network/device.go:33` — `IPDevice` (raw-IP `Read`/`Write`/`Close`); we wrap the platform fd as one.
+- `network/lwip2transport/device.go:72` — `ConfigureDevice(StreamDialer, PacketProxy) (IPDevice, error)`.
+- `transport/stream.go:128` — `StreamDialer.DialStream(ctx, raddr)`; `:24` — `StreamConn` (half-close).
+- `network/packet_proxy.go:31` — `PacketProxy` (UDP session interface).
+- `x/examples/outline-cli/` — reference wiring: fd→`IPDevice`, `ConfigureDevice`, dual `io.Copy`.
