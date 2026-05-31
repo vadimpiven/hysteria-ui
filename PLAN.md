@@ -1,7 +1,8 @@
 # Hysteria UI — Architecture & Plan
 
-Native Hysteria 2 **client** apps over a **shared Go core** (the app **Model** — all state + logic); only the UI is
-platform-specific. Build macOS first, then iOS/iPadOS, Android/Android TV, and Windows.
+Native Hysteria 2 **client** apps over a **shared Go core** (the app **Model** — all state + logic) and a
+**single shared .NET/Avalonia View** (the UI); only the thin OS-integration shims (TUN provider, secure
+store) are platform-specific. Build macOS first, then iOS/iPadOS, Android/Android TV, Windows, and Linux.
 _(Goal, scope, platforms: from user.)_
 
 **Features (v1):** add a profile (**enter** a `hysteria2://` link — type it, or scan its QR where
@@ -16,6 +17,7 @@ connect/disconnect a system-wide TUN.
 - `golang.getoutline.org/sdk` (Apache-2.0) — its `network` + `network/lwip2transport` (§3.2); pin at integration
 - `eycorsican/go-tun2socks v1.16.11` (transitive via Outline — Go wrapper MIT, lwIP C core BSD-3)
 - `apernet/quic-go v0.59.1-0.20260425001925-6c6cc9bcb716` (`core/go.mod:8`)
+- **.NET / Avalonia UI** (pinned in the UI project, not `go.mod`): Avalonia (MIT), SkiaSharp (MIT over Skia BSD-3) — §3.7
 
 ---
 
@@ -38,7 +40,7 @@ connect/disconnect a system-wide TUN.
 ## 2. Architecture
 
 ```text
-                Shared Go core (one module, bound per platform)
+                Shared Go core (one Go module, C-ABI bound)
    ┌─────────────────────────────────────────────────────────────────┐
    │   internal/  (rich Go — hidden from native & external imports): │
    │     profile/  parsed hysteria2:// profile (struct + JSON)       │
@@ -47,17 +49,23 @@ connect/disconnect a system-wide TUN.
    │     tunnel/   Outline lwIP netstack + core/client (ext-only)    │
    │     app/      Model: serialized actor — snapshots + intents     │
    │     errkind/  connect-error enum (leaf)                         │
-   │   bind/  app + ext facades — flat, binding-safe (JSON + cb)     │
+   │   bind/  app + ext facades + C-ABI shim — flat (JSON + cb)      │
    └─────────────────────────────────────────────────────────────────┘
-        │ gomobile xcframework        │ gomobile .aar       │ c-shared DLL
-        ▼ (Apple)                     ▼ (Android)           ▼ (Windows)
-   SwiftUI Views                 Compose Views          WinUI/.NET Views
-   (macOS/iOS/iPadOS)            (AndroidTV too)        (Windows)
+                          │  c-archive / c-shared — ONE C ABI, every target
+                          ▼  P/Invoke
+              Single .NET / Avalonia View — shared by ALL platforms
+              (macOS · iOS/iPadOS · Android(+TV) · Windows · Linux)
+
+   Platform-native shims (each in its own language, behind the core):
+     Apple → Swift NE PacketTunnelProvider      Android → VpnService
+     Windows → service + Wintun                 Linux → systemd daemon + /dev/net/tun
 ```
 
-**Model–View** with the **Model in Go**. The native View is the only platform-specific layer: it renders
-a state snapshot from the Go `app.Model` and sends back user intents — no business logic in
-Swift/Kotlin/C#. State flows one way: tunnel → OS → app observes → snapshot → UI (§4).
+**Model–View** with the **Model in Go** and a **single shared .NET/Avalonia View**. The View renders a
+state snapshot from the Go `app.Model` and sends back user intents — no business logic in C# either; it
+is a thin shell over the Go Model. The only platform-specific code is the OS-integration shims (TUN
+provider, secure store), each in its native language behind the core. State flows one way: tunnel → OS →
+app observes → snapshot → UI (§4).
 
 ---
 
@@ -72,14 +80,17 @@ Each OS hands the tunnel a file descriptor, or (Windows) the core opens the adap
 | iOS / iPadOS / macOS | NetworkExtension Packet Tunnel Provider           | utun **fd**            |
 | Android / Android TV | `VpnService.establish()` → `ParcelFileDescriptor` | **fd**                 |
 | Windows              | **Wintun** adapter (kernel driver)                | core opens it directly |
+| Linux                | `/dev/net/tun` via `ioctl(TUNSETIFF)` (kernel)    | daemon opens it directly |
 
 Outline's netstack consumes a `network.IPDevice` — a plain `Read`/`Write`/`Close` over raw IP
 packets (`network/device.go:33`). On Apple/Android we wrap the handed-in **fd** as an `IPDevice`
 and `io.Copy` it against the lwIP device (§3.2); on Windows we open the **Wintun** adapter via
 WireGuard's `wintun` Go bindings (MIT) — which `LoadLibrary` the bundled `wintun.dll` (§3.7) — and
-wrap *that* as an `IPDevice`. No
+on Linux the privileged daemon opens **`/dev/net/tun`** (`ioctl(TUNSETIFF)`, needs `CAP_NET_ADMIN`),
+wrapping *that* fd as an `IPDevice`. No
 privileged route/iptables work lives in the core — the OS (Apple `NEPacketTunnelNetworkSettings`,
-Android `VpnService`) or the app (Windows service) sets routes.
+Android `VpnService`) or the privileged side (Windows service; Linux daemon via netlink/rtnetlink)
+sets routes.
 
 ### 3.2 Userspace netstack: Outline SDK lwIP, on every platform
 
@@ -120,17 +131,21 @@ ceiling. **lwIP (§3.2) is an embedded C stack designed for KB-scale RAM**, so t
 weight is the Go runtime + quic-go buffers, not the TCP/IP stack. Still tight, so mitigate with GC
 tuning (`debug.SetMemoryLimit` ≈ 12 MB, set **only in the extension's entry point** — a separate
 process on Apple; on Android/Windows the single shared process must not be throttled that low) and
-by linking only the minimal subset into the extension (§4). iOS is the constraint; macOS's cap is
+by linking only the minimal subset into the extension (§4). **The .NET/Avalonia runtime never enters
+the extension** — it lives only in the app process; the NE extension is a Swift shim + Go (c-archive),
+so the shared-UI choice can't threaten the cap. iOS is the constraint; macOS's cap is
 generous — so measure this first (§6, Phase 2). `[Confirm the live ceiling on target devices in the spike.]`
 
-### 3.4 Binding surface is flat
+### 3.4 Binding surface is flat — one C ABI for every platform
 
-gomobile / c-shared export only primitives, `[]byte`, `error`, exported structs (by reference), and
-native-implemented callback interfaces — no generics, maps, or rich slices. So `bind/` is flat:
-primitives + JSON strings for complex objects + an observer interface; all richness stays behind it
-(under `internal/`, §5). The surface needs **two ABI adapters, not one**: `gomobile bind` wants Go
-interfaces/structs, while the Windows **c-shared** build is a C ABI (`//export` funcs, a handle
-table, C-function-pointer callbacks) — see `bind/cshared` (§5).
+Because the View is a single .NET/Avalonia app (§2), every platform consumes the core through the
+**same C ABI** via P/Invoke — `gomobile` is dropped. The core ships as a `c-archive` (statically
+linked on Apple, incl. the NE extension) or `c-shared` `.so`/`.dll` (Linux/Windows/Android), built
+once with `CGO_ENABLED=1`. A C ABI exports only primitives, `[]byte` (pointer+len), ints-for-errors,
+and C-function-pointer callbacks — no generics, maps, or rich slices — so `bind/` is flat: primitives
++ JSON strings for complex objects + a callback for the observer; all richness stays behind it (under
+`internal/`, §5). **One adapter, not two**: a handle table over `bind/{app, ext}` with `//export`
+funcs and function-pointer callbacks, marshaled on the .NET side by P/Invoke — see `bind/cshared` (§5).
 
 ### 3.5 Secrets live in platform-native secure storage
 
@@ -142,8 +157,12 @@ The `hysteria2://` link is a bearer credential, read/written via a native `Secur
   first unlock).
 - **Android** — Keystore-wrapped AES-GCM (hardware-backed where available).
 - **Windows** — DPAPI (`CryptProtectData`, per-user).
+- **Linux** — the **Secret Service** API over D-Bus (gnome-keyring / KWallet), collection-locked with
+  the login session. Reached over D-Bus, so nothing LGPL is linked (§3.7).
 
-The dev plaintext stub is build-tag gated and never shipped.
+`SecureStore` is implemented in C# in the app on every platform; on Apple the NE extension additionally
+reads the secret itself in Swift via the shared Keychain Access Group (§4). The dev plaintext stub is
+build-tag gated and never shipped.
 
 ### 3.6 macOS TUN: NetworkExtension, not a privileged helper
 
@@ -167,6 +186,11 @@ links everything. The pieces:
   verification** (the Mullvad model). It's WireGuard-LLC-kernel-signed; we redistribute as-is and
   never sign the driver ourselves. End users download nothing separately. `[Supply-chain note: we
   depend on WireGuard LLC's MS signing standing — pin a known-good DLL rather than fetch latest.]`
+- `.NET` runtime + BCL (**MIT**), `Avalonia` (**MIT**), `SkiaSharp` (**MIT** wrapper over Skia, **BSD-3**) —
+  the shared-UI stack is wholly permissive; on Linux the secret store is reached over the Secret
+  Service **D-Bus** API, so LGPL `libsecret`/GTK are never linked.
+- **Linux TUN** — `/dev/net/tun` is a kernel interface (no bundled driver, unlike Wintun), so Linux
+  adds no binary-redistribution or licensing burden.
 - `apernet/sing-tun` — **GPL-3.0**. Linking it makes the whole binary a combined GPL-3.0 work on
   distribution, widely held **incompatible with the Apple App Store** (the VLC precedent; FSF's
   standing position). sing-box ships on the App Store only because its author *is* sing-tun's
@@ -182,13 +206,14 @@ so our own code is free to take any license (it does: dual `Apache-2.0 OR MIT`, 
 
 ### 3.8 cgo on every build path
 
-lwIP is C (§3.2), so anything linking `tunnel/` links **cgo** — every *extension* target needs a C
-toolchain and a configured cross-compile in CI: the Apple xcframework (clang, device + simulator
-slices), the Android `.aar` (NDK clang), the Windows c-shared DLL (mingw-w64 or MSVC). Standard for
-gomobile / c-shared (every TUN client links cgo), but it rules out `CGO_ENABLED=0` and shapes the CI
-runners. Useful asymmetry: `core/client` and the whole `bind/app` subset are **cgo-free** (pure-Go
-quic-go) — only `bind/ext` pulls C in. So the app process builds without a C toolchain; only the
-extension needs one, reinforcing the two-binary wall (§4).
+The C ABI (§3.4) is `c-archive`/`c-shared`, which requires `CGO_ENABLED=1` even when our Go adds no C —
+so every target needs a C toolchain and a configured cross-compile in CI: Apple (clang, device +
+simulator slices), Android (NDK clang), Windows (mingw-w64 or MSVC), Linux (gcc/clang). `CGO_ENABLED=0`
+is ruled out on every path; it shapes the CI runners. The asymmetry that matters is now about
+*third-party* C, not cgo-on/off: `core/client` and the whole `bind/app` subset pull in **no C library**
+(pure-Go quic-go), while only `bind/ext` links **lwIP**. So the extension carries the C netstack and
+the app does not — the weight that maps to the iOS memory wall (§3.3) — reinforcing the two-binary
+split (§4).
 
 ---
 
@@ -200,25 +225,29 @@ This is where VPN clients usually break, so the contract is explicit.
   authoritative — the user can toggle the VPN from OS settings, and the OS can tear it down or
   memory-kill the extension. So `app/` **derives** `ConnectionState` from OS status events, never
   optimistically. One-way flow: extension → OS status → app observes → snapshot → UI.
-- **Two binaries on Apple — a structural wall, not a convention.** App and NE extension are separate
-  processes with no shared heap. All rich Go lives under `core/internal/` (hidden from native and
-  external importers), and the two binding packages link **disjoint** subsets: `bind/app` →
-  `internal/{profile, config, store, app}`; `bind/ext` → `internal/{profile, store (read), tunnel,
-errkind}` **only** — never `config` (the parser) or `app` (the state machine). Keeping
-  parsing/validation/app out of the extension is the lever for the iOS cap (§3.3): profiles are
-  validated **app-side at save time**, and the extension consumes a minimal validated blob — a
-  serialized `profile.Profile`, deserialized **without** linking the parser (that's why the struct
-  lives in its own `profile` leaf, apart from `config`). A CI gate (`go list -deps ./bind/ext`)
-  **fails the build** if an app-only package leaks in — the linker's dead-code elimination is not a
-  guarantee to bet a hard memory cap on. On Android/Windows both subsets compile into one process —
-  there the boundary is logical, but the import graph stays identical so the wall still holds.
-- **The extension is self-sufficient.** On autoconnect/on-demand the OS may start it with the app not
-  running; it reads the active profile (App Group) and secret (Keychain) itself. The app is never on
-  the connect path.
-- **Concurrency.** gomobile calls Go from arbitrary native threads; Go callbacks fire on a goroutine.
-  So `app.Model` is a **serialized actor** (one goroutine draining an intent channel); intents are
-  non-blocking and return immediately; results surface only via the observer; native callbacks may
-  arrive on any thread and must be marshaled to the UI thread.
+- **A privileged tunnel process, walled from the app — structural, not a convention.** On Apple (NE
+  extension), Windows (service), and Linux (systemd daemon) the tunnel runs in a **separate privileged
+  process** with no shared heap; on Android it shares the app process (the wall is then logical). All
+  rich Go lives under `core/internal/` (hidden from native and external importers), and the two binding
+  facades link **disjoint** subsets: `bind/app` → `internal/{profile, config, store, app}`; `bind/ext`
+  → `internal/{profile, store (read), tunnel, errkind}` **only** — never `config` (the parser) or
+  `app` (the state machine). Keeping parsing/validation/app out of the tunnel process is the lever for
+  the iOS cap (§3.3): profiles are validated **app-side at save time**, and the tunnel consumes a
+  minimal validated blob — a serialized `profile.Profile`, deserialized **without** linking the parser
+  (that's why the struct lives in its own `profile` leaf, apart from `config`). The **.NET/Avalonia
+  runtime lives only in the app process**; the privileged side is a native shim (Swift / service /
+  daemon) + Go (c-archive), never .NET — so the UI toolkit never weighs on the tunnel. A CI gate
+  (`go list -deps ./bind/ext`) **fails the build** if an app-only package leaks in — the linker's
+  dead-code elimination is not a guarantee to bet a hard memory cap on. The import graph is identical
+  on every platform, so the wall holds even where (Android) it's one process.
+- **The tunnel process is self-sufficient.** On autoconnect/on-demand it may start with the app not
+  running; it reads the active profile and secret itself (Apple: App Group + Keychain; Linux: config
+  dir + Secret Service; Windows: per-user store + DPAPI). The app/GUI is never on the connect path.
+- **Concurrency.** P/Invoke calls Go from arbitrary .NET threads; Go callbacks fire on a goroutine and
+  cross back as C function pointers. So `app.Model` is a **serialized actor** (one goroutine draining
+  an intent channel); intents are non-blocking and return immediately; results surface only via the
+  observer; callbacks may arrive on any thread and must be marshaled to the UI thread (Avalonia's
+  `Dispatcher.UIThread`).
 
 ---
 
@@ -226,7 +255,7 @@ errkind}` **only** — never `config` (the parser) or `app` (the state machine).
 
 ```text
 hysteria-ui/
-  core/                   # one Go module; only bind/* are gomobile/c-shared bound
+  core/                   # one Go module; only bind/* are C-ABI exported (c-archive/c-shared)
     go.mod                # require apernet/hysteria/core; replace -> ../../hysteria/core (dev)
     internal/             # all rich Go — unreachable from native and external importers
       profile/            # parsed hysteria2:// profile: struct + JSON + ClientConfig(); imports core/client, NO parser (ext-linkable)
@@ -235,13 +264,15 @@ hysteria-ui/
       tunnel/             # Outline lwIP netstack (cgo) + core/client adapter from profile.Profile (ext-only)
       app/                # app.Model: serialized actor; state + stats snapshots; intents (app-only)
       errkind/            # connect-error enum; zero deps; produced in ext, relayed to app
-    bind/                 # the gomobile/c-shared binding boundary; flat, binding-safe (§3.4)
+    bind/                 # the C-ABI binding boundary; flat, binding-safe (§3.4)
       app/                # full surface: imports internal/{profile, config, store, app}
       ext/                # tunnel + read-only profile/secret ONLY: internal/{profile, store, tunnel, errkind}
-      cshared/            # (Windows) cgo //export shim + handle table over bind/{app, ext}
-  apple/                  # Xcode workspace
-  android/                # Gradle (later)
-  windows/                # .NET/WinUI (later)
+      cshared/            # the single C ABI for ALL platforms: cgo //export shim + handle table over bind/{app, ext}
+  ui/                     # ONE Avalonia .NET solution: shared views + platform heads (P/Invoke the C ABI)
+  apple/                  # Swift NE PacketTunnelProvider + Xcode packaging (app head + extension)
+  android/                # VpnService glue (in the .NET Android head) + packaging (later)
+  windows/                # privileged service + Wintun + installer (later)
+  linux/                  # privileged systemd daemon + packaging: Flatpak/AppImage/deb/rpm (later)
   PLAN.md
 ```
 
@@ -289,14 +320,14 @@ serverUnreachable | tlsPinMismatch | timeout | unknown`). Lives apart from `app`
     - **Two output channels, never merged:** discrete state snapshots, and throttled stats.
     - `lastError` maps to one actionable UI sentence, no diagnostics screen (reconciles the minimal UI
       of §1 with the no-telemetry rule of §7).
-- **`bind/`** — the binding boundary; the **only** non-`internal` packages, the only ones
-  `gomobile bind` / c-shared export. Two entry points: `bind/app NewApp(containerPath, secure
-SecureStore)` and `bind/ext NewTunnel(...)`. The native-implemented observer interfaces
-  (`StateObserver`, `SubscribeStats`) are **declared in `bind/*`** (not in `app`) — gomobile
-  generates the native stubs from the bound package's signatures, and `app` stays decoupled behind
-  Go-native channels. `bind/cshared` adds the Windows C-ABI wrappers (handle table, C-function-pointer
-  callbacks). A multi-consumer contract (three UIs) → **additive-only, versioned**; every snapshot
-  carries a `schemaVersion`.
+- **`bind/`** — the binding boundary; the **only** non-`internal` packages, the only ones the C ABI
+  exports. Two entry points: `bind/app NewApp(containerPath, secure SecureStore)` and `bind/ext
+  NewTunnel(...)`. The observer surface (`StateObserver`, `SubscribeStats`) is **declared in `bind/*`**
+  (not in `app`), and `app` stays decoupled behind Go-native channels. `bind/cshared` is the **single
+  C-ABI shim for every platform** (handle table, `//export` funcs, C-function-pointer callbacks),
+  consumed from C# by P/Invoke — there is no second (gomobile) adapter. A single multi-platform
+  consumer (one .NET View) still gets an **additive-only, versioned** contract; every snapshot carries
+  a `schemaVersion`.
 
 **Import DAG (must stay acyclic):** `profile` and `errkind` are sinks (imported widely; `profile`
 imports only `core/client`, `errkind` imports nothing). `config → profile`; `store → profile`;
@@ -304,19 +335,20 @@ imports only `core/client`, `errkind` imports nothing). `config → profile`; `s
 app, store, config`; `bind/ext → tunnel, store, errkind`. `bind/ext` must never reach `config` or
 `app` — the `go list -deps` CI gate (§4) enforces it.
 
-Link entry is native text input — the universal add path (incl. Android TV). QR **scanning** is an
-optional native shortcut only where a camera exists (camera → string → `AddProfileFromURI`). QR
+Link entry is an Avalonia text field — the universal add path (incl. Android TV). QR **scanning** is an
+optional shortcut only where a camera exists (camera → string → `AddProfileFromURI`). QR
 **generation** for the share view reuses `app/internal/utils/qr.go` (Go renders the QR from
-`ExportProfileURI`); the native layer displays it alongside a Copy button.
+`ExportProfileURI`); the Avalonia layer displays it alongside a Copy button.
 
 ---
 
 ## 6. Roadmap
 
-1. **Bootstrap the binding** — `core/` with `replace → ../../hysteria/core`; build a trivial
-   xcframework (`-target ios,iossimulator,macos`) and call Go from an empty SwiftUI app.
+1. **Bootstrap the binding** — `core/` with `replace → ../../hysteria/core`; build the C-ABI lib
+   (`c-archive`/`c-shared`) and P/Invoke a single exported function from an empty Avalonia desktop app.
 2. **Memory spike (de-risk first)** — throwaway NE tunnel on a **real iPhone**: lwIP stack + client
-    - one hardcoded profile, no UI. Measure RSS against the cap, and confirm lwIP + cgo actually
+    - one hardcoded profile, no UI — the extension is Swift + Go (`c-archive`), no .NET runtime, so it
+      measures the real shipping footprint. Measure RSS against the cap, and confirm lwIP + cgo actually
       run in the NE sandbox (fd read/write loop; §3.2). If it doesn't fit, the architecture
       changes (§3.3) — so learn it now. Needs the entitlement in hand. **Also the one-module-vs-two
       decision point:** if `internal/` + dead-code elimination don't keep the ext footprint down, split
@@ -324,16 +356,20 @@ optional native shortcut only where a camera exists (camera → string → `AddP
 3. **Config + store** — port the parser into `internal/config` (→ `profile.Profile`) with fuzz +
    corpus tests; `internal/store` over a container path + `SecureStore`, with dev stubs; add the
    `go list -deps ./bind/ext` CI gate (§4).
-4. **Model + macOS UI (mocked tunnel)** — `internal/app` + `bind/app`; SwiftUI list / add (text
-   entry) / share (link + Copy + QR) / delete / select / connect — nothing else (§1).
+4. **Model + macOS UI (mocked tunnel)** — `internal/app` + `bind/app` + `bind/cshared`; the Avalonia
+   desktop View (list / add (text entry) / share (link + Copy + QR) / delete / select / connect) over
+   P/Invoke — nothing else (§1). This View is the one that fans out to every platform (step 7).
 5. **Real tunnel on macOS** — `internal/tunnel` (hysteria→Outline adapter, §5) in `bind/ext`; NE
    extension; App Group + Keychain; `ConnectionState` from `NEVPNStatus` (§4); status/stats IPC.
    Hidden defaults: full-tunnel route, autoconnect last profile.
-6. **Add-link UX + share** — native text entry (the universal path, incl. Android TV) + optional QR
+6. **Add-link UX + share** — Avalonia text entry (the universal path, incl. Android TV) + optional QR
    scanner where there's a camera; per-profile **share view**: show the link with a Copy button
    (clipboard marked sensitive / local-only / auto-expiring; §7.4) + its QR (`qr.go`).
-7. **Fan out** — iOS/iPadOS (reuse extension + core), then Android (`.aar` + `VpnService` + Compose),
-   then Windows (DLL + Wintun service + WinUI).
+7. **Fan out (reuse the one View)** — each platform reuses the Avalonia View + the C-ABI core; only the
+   OS shim, secure store, and packaging are new per platform: iOS/iPadOS (reuse the Swift NE extension;
+   Avalonia iOS head), Android/Android TV (`VpnService` in the .NET Android head; D-pad focus pass),
+   Windows (privileged service + Wintun + installer), **Linux** (privileged systemd daemon over
+   `/dev/net/tun` + Secret Service; Flatpak/AppImage/deb/rpm).
 
 ---
 
@@ -344,7 +380,8 @@ local malware → OS sandbox + native secure store; locked-device theft → Keyc
 file data-protection; network MITM → TLS pinning; supply chain → pinned deps + signed builds.
 
 1. **At rest** — links only in the secure store (§3.5); the JSON doc holds no auth and uses
-   `NSFileProtectionCompleteUntilFirstUserAuthentication` on Apple.
+   `NSFileProtectionCompleteUntilFirstUserAuthentication` on Apple, `0600` perms under
+   `$XDG_CONFIG_HOME` on Linux.
 2. **In memory** — secrets cross the boundary as `[]byte` (not `string`), best-effort zeroed after a
    connect. `[Go GC may copy — zeroization is best-effort.]`
 3. **Transport** (decided vs. schema) — the link carries only `sni`, `insecure`, `pinSHA256` (auth in
@@ -367,17 +404,22 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
 6. **Logging** — release builds redact link, auth, and server address at the logger.
 7. **Supply chain & licensing** — pin every dependency (see header). The netstack is **Outline SDK**
    (Apache-2.0, Google Jigsaw, production-shipped), deliberately **not** `apernet/sing-tun` (GPL-3.0,
-   App-Store-incompatible; §3.7). All links are permissive (MIT / Apache / BSD). Prefer reproducible builds.
+   App-Store-incompatible; §3.7). All links are permissive (MIT / Apache / BSD) — Go side and the
+   .NET/Avalonia/Skia UI side alike; Linux avoids LGPL by reaching the secret store over D-Bus (§3.7).
+   Prefer reproducible builds.
 8. **Distribution & least privilege** — sign + notarize on Apple, requesting only NE / App-Group /
    Keychain entitlements; signed non-debuggable Android release; Authenticode-signed Windows DLL +
-   installer over the Microsoft-signed Wintun driver.
+   installer over the Microsoft-signed Wintun driver; Linux via Flatpak (sandboxed) / AppImage / distro
+   packages, with the systemd daemon granted only **`CAP_NET_ADMIN`** (not full root) and the GUI
+   unprivileged.
 
 ---
 
 ## 8. Open questions & release gates
 
 - **iOS NE memory** — design to **~15 MB**; the Go runtime + quic-go are the weight (lwIP is a tiny
-  embedded stack, §3.2), but it stays the top risk, measured in the Phase-2 device spike (§3.3).
+  embedded stack, §3.2), but it stays the top risk, measured in the Phase-2 device spike (§3.3). The
+  .NET/Avalonia runtime never enters the extension (§3.3, §4), so the shared-UI choice doesn't move it.
 - **Netstack license (resolved, keep verified)** — the App-Store path depends on the netstack staying
   permissive: Outline lwIP (Apache / MIT / BSD), never `sing-tun` (GPL-3.0). A CI license-scan on
   `bind/ext`'s dep tree should fail on any GPL ingress (§3.7). `[Confirm with counsel before release.]`
@@ -387,15 +429,17 @@ file data-protection; network MITM → TLS pinning; supply chain → pinned deps
   covers both stores — an **LLC** (simple, pays the fees) or a **non-profit** (also valid; Apple
   waives the fee for a free app, but more governance). **Off-store routes need no entity:** macOS
   Developer-ID-notarized, Android via APK/F-Droid/third-party stores, Windows outside the Microsoft
-  Store — **only the iOS App Store has no individual path**. Gates release only, not development or
+  Store, Linux via Flathub / distro repos — **only the iOS App Store has no individual path**. Gates
+  release only, not development or
   the Phase-2 spike. Verify in-jurisdiction (tax residency may create obligations regardless).
   `[Decision deferred until the core works.]`
 - **App Store Guideline 5.4** — use NEVPNManager; the privacy policy must commit to no third-party
   data sale/disclosure; declare data collection before use; some territories need a VPN license in
   review notes. Our no-telemetry stance (§7) covers the data clause.
 - **Acknowledgements bundle** — generate a third-party-notices screen at build time (union of every
-  dependency's notice: Apache `NOTICE`, MIT/BSD copyright lines), e.g. via `go-licenses`. A
-  distribution duty independent of our own `LICENSE-*` (§3.7); app-store reviewers expect it.
+  dependency's notice: Apache `NOTICE`, MIT/BSD copyright lines), spanning **both** dependency trees —
+  the Go modules (e.g. via `go-licenses`) **and** the .NET/NuGet tree (Avalonia, SkiaSharp, runtime).
+  A distribution duty independent of our own `LICENSE-*` (§3.7); app-store reviewers expect it.
 - **Profile schema** — version from day one for migration (design choice).
 
 ---
