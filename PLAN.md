@@ -197,10 +197,16 @@ Rust cross-compiles with cargo: Apple device plus simulator slices (`aarch64-app
 `csbindgen` emits the Rust `extern "C"` plus C# bindings. The crypto provider
 (`ring`/`aws-lc-rs`) carries some C/asm, but cargo handles it per target.
 
+Build orchestration is `mise` plus TypeScript. `mise.toml` is the single source of truth for tool
+versions (Rust, `cargo-ndk`, `cargo-deny`, Node, pnpm, …) and tasks, so contributors install
+nothing globally and run `mise run <task>`. Multi-step logic — per-target builds, the xcframework
+lipo, `csbindgen` generation into `bindings/`, packaging — lives in TypeScript under `scripts/`,
+run via Node; per-package steps go through pnpm scripts.
+
 The app/extension wall is a compile-time crate-dependency guarantee: `ffi-ext` does not depend on
 `config` (the parser) or `model` (the state machine) in its `Cargo.toml`, so they cannot link in;
-an `xtask` `cargo tree` assertion (run locally and in CI) fails the build if that changes. The
-extension links only `{profile, store (read), conn-error, tunnel (which pulls hysteria),
+a `cargo tree` assertion (a `mise` task, run locally and in CI) fails the build if that changes.
+The extension links only `{profile, store (read), conn-error, tunnel (which pulls hysteria),
 ffi-util}`, never the URL parser or the Model (the lever for the iOS cap, §3.3).
 
 Workspace conventions: shared versions in `[workspace.dependencies]`, shared metadata in
@@ -244,9 +250,11 @@ This is where VPN clients usually break, so the contract is explicit.
 
 ```text
 hysteria-ui/
+  mise.toml                # single source of truth: pinned tool versions + tasks (setup/build/test/check/fix)
+  package.json             # "type": "module"; pnpm scripts + devDeps
+  scripts/                 # TypeScript build orchestration (run via Node): xcframework, cargo-ndk, csbindgen, packaging, wall check
   core/                    # cargo workspace (virtual manifest)
     Cargo.toml             # [workspace] members + workspace.{dependencies,lints,package}; publish = false
-    .cargo/config.toml     # [alias] xtask = "run -p xtask --"
     crates/
       profile/             # pure serde data types; #![forbid(unsafe_code)]; deps: serde
       config/              # hysteria2:// parse + validate -> profile::Profile; untrusted-input parser (app-only)
@@ -258,7 +266,6 @@ hysteria-ui/
       ffi-util/            # handle table, catch_unwind export wrapper, buffer/JSON helpers, SecureStore C-callback adapter
       ffi-app/             # cdylib+staticlib (symbols hyapp_*): extern "C" + csbindgen; deps: model, ffi-util
       ffi-ext/             # cdylib+staticlib (symbols hyext_*): extern "C" + csbindgen; deps: tunnel, store, conn-error, profile, ffi-util
-    xtask/                 # build orchestration: cargo-ndk, lipo/xcframework, csbindgen, packaging; the app/ext-wall assertion
     fuzz/                  # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
   bindings/                # generated + committed: C header + C# P/Invoke (csbindgen output); core/ produces, ui/ consumes
   ui/                      # ONE Avalonia .NET solution: shared views + platform heads (P/Invoke the C ABI)
@@ -321,8 +328,8 @@ Crate dependency DAG (must stay acyclic): `profile` (serde-only) and `conn-error
 `config → profile`; `store → profile`; `hysteria → profile, conn-error`; `tunnel → hysteria,
 profile, conn-error`; `model → config, store, conn-error, profile` (never `tunnel`/`hysteria`);
 `ffi-app → model, ffi-util`; `ffi-ext → tunnel, store, conn-error, profile, ffi-util`. `ffi-ext`
-must never reach `config` or `model` — enforced by Cargo deps plus an `xtask` `cargo tree`
-assertion (local and CI; §3.8).
+must never reach `config` or `model` — enforced by Cargo deps plus a `cargo tree` assertion (a
+`mise` task; local and CI; §3.8).
 
 Link entry is an Avalonia text field, the universal add path (including Android TV). QR scanning
 is an optional shortcut only where a camera exists (camera → string → `AddProfileFromURI`). QR
@@ -333,9 +340,9 @@ the Avalonia layer displays it alongside a Copy button.
 
 ## 6. Roadmap
 
-1. Bootstrap the binding — `core/` cargo workspace; build a `staticlib`/`cdylib` (driven by
-   `xtask`) with `csbindgen` and P/Invoke a single exported function from an empty Avalonia
-   desktop app.
+1. Bootstrap the binding — `core/` cargo workspace; build a `staticlib`/`cdylib` (via a `mise`
+   task) with `csbindgen` and P/Invoke a single exported function from an empty Avalonia desktop
+   app.
 2. Memory spike — throwaway NE tunnel on a real iPhone: smoltcp plus a Quinn echo/dial, one
    hardcoded target, no UI. Measure RSS against the cap (§3.3); confirm smoltcp + Quinn + fd
    read/write run in the NE sandbox. Needs the entitlement in hand.
