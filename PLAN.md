@@ -47,17 +47,15 @@ The runtime tree is permissive (MIT / Apache-2.0 / 0BSD / ISC); `cargo-deny` kee
 
 ```text
                 Shared Rust core (cargo workspace, C-ABI bound)
-   ┌─────────────────────────────────────────────────────────────────┐
-   │   crates/  (rich Rust — internal to the workspace):              │
-   │     profile/   parsed hysteria2:// profile (struct + serde)      │
-   │     config/    hysteria2:// parse + validate    (app-only)       │
-   │     store/     JSON doc + SecureStore (secrets)                  │
-   │     hysteria/  Hysteria 2 client on Quinn: auth+TCP+UDP+Brutal   │
-   │     tunnel/    smoltcp netstack + tun-rs fd + drives hysteria/   │
-   │     app/       Model: async actor — snapshots + intents          │
-   │     errkind/   connect-error enum (leaf)                         │
-   │   bind-app/ + bind-ext/  extern "C" + csbindgen — flat (JSON+cb) │
-   └─────────────────────────────────────────────────────────────────┘
+   crates/  (rich Rust, internal to the workspace)
+     profile/     parsed hysteria2:// profile (pure serde data)
+     config/      hysteria2:// parse + validate                (app-only)
+     store/       JSON doc + SecureStore (secrets)
+     conn-error/  connect-error enum (leaf)
+     hysteria/    Hysteria 2 client on Quinn: auth + TCP + UDP + Brutal
+     tunnel/      smoltcp netstack + tun-rs fd; drives hysteria/
+     model/       the Model: async actor — snapshots + intents
+   ffi-app/  ffi-ext/  ffi-util/   extern "C" + csbindgen (flat: JSON + cb)
                           │  staticlib / cdylib  — ONE C ABI, every target
                           ▼  P/Invoke
               Single .NET / Avalonia View — shared by ALL platforms
@@ -69,31 +67,31 @@ The runtime tree is permissive (MIT / Apache-2.0 / 0BSD / ISC); `cargo-deny` kee
 ```
 
 Model–View with the Model in Rust and a single shared .NET/Avalonia View. The View renders a
-state snapshot from the Rust `app` Model and sends back user intents; there is no business logic
+state snapshot from the Rust `model` crate and sends back user intents; there is no business logic
 in C#, only a thin shell over the Rust Model. The only platform-specific code is the
 OS-integration shims (TUN provider, secure store), each in its native language behind the core.
-State flows one way: tunnel → OS → app observes → snapshot → UI (§4).
+State flows one way: tunnel → OS → model observes → snapshot → UI (§4).
 
 ### 2.1 Layers
 
-| Layer                          | Component                                          |
-|--------------------------------|----------------------------------------------------|
-| UI / View                      | `ui/` — Avalonia (.NET), one shared View           |
-| FFI binding                    | `bind-app` / `bind-ext` (`extern "C"` + csbindgen) |
-| App state machine              | `app/` — async actor: snapshots + intents          |
-| Profile store + secrets        | `store/` JSON doc + native `SecureStore`           |
-| Config / URI parse + validate  | `config/`                                          |
-| Profile model                  | `profile/` (struct + serde + config mapper)        |
-| Client API + proxy framing     | `hysteria/`                                        |
-| HTTP/3 auth handshake          | `h3` + `h3-quinn`                                  |
-| Obfuscation (Salamander/gecko) | wrapping Quinn `AsyncUdpSocket`                    |
-| Congestion control (Brutal)    | Quinn `congestion::Controller` impl                |
-| QUIC transport                 | `quinn`                                            |
-| TLS + cert pinning             | `rustls` + custom `ServerCertVerifier`             |
-| Userspace netstack             | `smoltcp`                                          |
-| TUN device / fd                | `tun-rs`                                           |
-| Async runtime / concurrency    | single-thread `tokio` + serialized actor           |
-| QR generation (share)          | `qrcode` crate                                     |
+| Layer                          | Component                                                     |
+|--------------------------------|---------------------------------------------------------------|
+| UI / View                      | `ui/` — Avalonia (.NET), one shared View                      |
+| FFI binding                    | `ffi-app` / `ffi-ext` / `ffi-util` (`extern "C"` + csbindgen) |
+| Model (state machine)          | `model/` — async actor: snapshots + intents                   |
+| Profile store + secrets        | `store/` JSON doc + native `SecureStore`                      |
+| Config / URI parse + validate  | `config/`                                                     |
+| Profile model                  | `profile/` (pure serde data)                                  |
+| Client API + proxy framing     | `hysteria/`                                                   |
+| HTTP/3 auth handshake          | `h3` + `h3-quinn`                                             |
+| Obfuscation (Salamander/gecko) | wrapping Quinn `AsyncUdpSocket`                               |
+| Congestion control (Brutal)    | Quinn `congestion::Controller` impl                           |
+| QUIC transport                 | `quinn`                                                       |
+| TLS + cert pinning             | `rustls` + custom `ServerCertVerifier`                        |
+| Userspace netstack             | `smoltcp`                                                     |
+| TUN device / fd                | `tun-rs`                                                      |
+| Async runtime / concurrency    | single-thread `tokio` + serialized actor                      |
+| QR generation (share)          | `qrcode` crate                                                |
 
 ---
 
@@ -146,11 +144,12 @@ The View is a single .NET/Avalonia app (§2), so every platform consumes the cor
 C ABI via P/Invoke. The core builds as a Rust `staticlib` (statically linked on Apple, including
 the NE extension) or `cdylib` `.so`/`.dll` (Windows/Android), and `csbindgen` generates the
 C# P/Invoke bindings. A C ABI exports only primitives, byte buffers (`*const u8` plus len),
-ints-for-errors, and C-function-pointer callbacks — no generics, maps, or rich slices. So `bind-*`
-is flat:
-primitives plus JSON strings for complex objects plus a callback for the observer; all richness
-stays behind it (in the internal crates, §5). One adapter: `#[no_mangle] extern "C"` functions
-plus a handle table over `bind-{app, ext}`, marshaled on the .NET side by P/Invoke.
+ints-for-errors, and C-function-pointer callbacks — no generics, maps, or rich slices. So `ffi-*`
+is flat: primitives plus JSON strings for complex objects plus a callback for the observer; all
+richness stays behind it (in the internal crates, §5). The handle table, the `SecureStore`
+C-callback adapter, and a `catch_unwind` export wrapper live in a shared `ffi-util` crate — a Rust
+panic crossing the C ABI is undefined behaviour, so every `#[no_mangle] extern "C"` export is
+wrapped, and the C-ABI libs build with `panic = "abort"`.
 
 ### 3.5 Secrets live in platform-native secure storage
 
@@ -198,11 +197,16 @@ Rust cross-compiles with cargo: Apple device plus simulator slices (`aarch64-app
 `csbindgen` emits the Rust `extern "C"` plus C# bindings. The crypto provider
 (`ring`/`aws-lc-rs`) carries some C/asm, but cargo handles it per target.
 
-The app/extension wall is a compile-time crate-dependency guarantee: `bind-ext` does not depend
-on `config` (the parser) or `app` (the state machine) in its `Cargo.toml`, so they cannot link
-in; a CI `cargo tree` / `cargo-deny` check fails the build if that changes. The extension links
-only `{profile, store (read), hysteria, tunnel, errkind}`, never the URL parser or the Model (the
-lever for the iOS cap, §3.3).
+The app/extension wall is a compile-time crate-dependency guarantee: `ffi-ext` does not depend on
+`config` (the parser) or `model` (the state machine) in its `Cargo.toml`, so they cannot link in;
+an `xtask` `cargo tree` assertion (run locally and in CI) fails the build if that changes. The
+extension links only `{profile, store (read), conn-error, tunnel (which pulls hysteria),
+ffi-util}`, never the URL parser or the Model (the lever for the iOS cap, §3.3).
+
+Workspace conventions: shared versions in `[workspace.dependencies]`, shared metadata in
+`[workspace.package]` (`publish = false`, MSRV, license), and `[workspace.lints]` setting
+`unsafe_code = "forbid"` for every crate except `ffi-util`/`ffi-app`/`ffi-ext` — so `unsafe` is
+confined to the FFI boundary.
 
 ---
 
@@ -212,13 +216,13 @@ This is where VPN clients usually break, so the contract is explicit.
 
 - The OS owns connection state. `NEVPNStatus` / `VpnService` / the Windows service is
   authoritative: the user can toggle the VPN from OS settings, and the OS can tear it
-  down or memory-kill the extension. So `app` derives `ConnectionState` from OS status events,
-  never optimistically. One-way flow: tunnel → OS status → app observes → snapshot → UI.
+  down or memory-kill the extension. So `model` derives `ConnectionState` from OS status events,
+  never optimistically. One-way flow: tunnel → OS status → model observes → snapshot → UI.
 - A privileged tunnel process, walled from the app. On Apple (NE extension) and Windows
   (service) the tunnel runs in a separate privileged process with no shared heap; on Android it
-  shares the app process (the wall is then logical). The two binding crates
-  link disjoint crate subsets: `bind-app` → `{profile, config, store, app}`; `bind-ext` →
-  `{profile, store (read), hysteria, tunnel, errkind}` only, never `config` or `app`. Profiles are
+  shares the app process (the wall is then logical). The two FFI crates link disjoint subsets:
+  `ffi-app` → `model` (the sole app-side facade); `ffi-ext` → `{tunnel, store (read), conn-error,
+  profile, ffi-util}`, never `config` or `model`. Profiles are
   validated app-side at save time, and the tunnel consumes a minimal validated blob — a serialized
   `profile::Profile`, deserialized without linking the parser (which is why `profile` is its own
   crate, apart from `config`). The .NET/Avalonia runtime lives only in the app process; the
@@ -229,7 +233,7 @@ This is where VPN clients usually break, so the contract is explicit.
   running; it reads the active profile and secret itself (Apple: App Group plus Keychain; Windows:
   per-user store plus DPAPI). The app/GUI is never on the connect path.
 - Concurrency. P/Invoke calls Rust from arbitrary .NET threads; the tunnel runs on a
-  single-threaded `tokio` runtime (Quinn is async). So `app` is a serialized actor (one task
+  single-threaded `tokio` runtime (Quinn is async). So `model` is a serialized actor (one task
   draining an `mpsc` intent channel); intents are non-blocking and return immediately; results
   surface only via the observer callback; callbacks may arrive on any thread and must be marshaled
   to the UI thread (Avalonia's `Dispatcher.UIThread`).
@@ -240,74 +244,85 @@ This is where VPN clients usually break, so the contract is explicit.
 
 ```text
 hysteria-ui/
-  core/                   # one cargo workspace; only bind-* produce C-ABI libs
-    Cargo.toml            # [workspace]
+  core/                    # cargo workspace (virtual manifest)
+    Cargo.toml             # [workspace] members + workspace.{dependencies,lints,package}; publish = false
+    .cargo/config.toml     # [alias] xtask = "run -p xtask --"
     crates/
-      profile/            # parsed hysteria2:// profile: struct + serde + client-config mapper; NO parser (ext-linkable)
-      config/             # hysteria2:// parse + validate -> profile::Profile; the untrusted-input parser (app-only)
-      store/              # profile store: JSON doc + secrets; SecureStore trait DEFINED here
-      hysteria/           # the Hysteria 2 client on Quinn: h3 auth + TCP + UDP/datagram + frag + Brutal CC + Salamander obfs + port-hop
-      tunnel/             # smoltcp netstack + tun-rs fd; drives the hysteria client (ext-only)
-      app/                # the Model: async serialized actor; state + stats snapshots; intents (app-only)
-      errkind/            # connect-error enum; zero deps; produced in ext, relayed to app
-      bind-app/           # cdylib+staticlib: extern "C" + csbindgen over {profile, config, store, app}
-      bind-ext/           # cdylib+staticlib: extern "C" + csbindgen over {profile, store, hysteria, tunnel, errkind}
-  ui/                     # ONE Avalonia .NET solution: shared views + platform heads (P/Invoke the C ABI)
-  apple/                  # Swift NE PacketTunnelProvider + Xcode packaging (app head + extension)
-  android/                # VpnService glue (in the .NET Android head) + packaging (later)
-  windows/                # privileged service + Wintun + installer (later)
+      profile/             # pure serde data types; #![forbid(unsafe_code)]; deps: serde
+      config/              # hysteria2:// parse + validate -> profile::Profile; untrusted-input parser (app-only)
+      store/               # JSON doc + SecureStore trait DEFINED here; deps: profile
+      conn-error/          # connect-error enum; zero-dep leaf; crosses the app/ext wall
+      hysteria/            # Hysteria 2 client on Quinn (mods: transport, auth, proxy, frag, obfs, brutal); builds the client from &profile::Profile
+      tunnel/              # smoltcp netstack + tun-rs fd; drives the hysteria client (ext-only)
+      model/               # the Model: async serialized actor; sole app-side facade; state + stats snapshots; intents (app-only)
+      ffi-util/            # handle table, catch_unwind export wrapper, buffer/JSON helpers, SecureStore C-callback adapter
+      ffi-app/             # cdylib+staticlib (symbols hyapp_*): extern "C" + csbindgen; deps: model, ffi-util
+      ffi-ext/             # cdylib+staticlib (symbols hyext_*): extern "C" + csbindgen; deps: tunnel, store, conn-error, profile, ffi-util
+    xtask/                 # build orchestration: cargo-ndk, lipo/xcframework, csbindgen, packaging; the app/ext-wall assertion
+    fuzz/                  # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
+  bindings/                # generated + committed: C header + C# P/Invoke (csbindgen output); core/ produces, ui/ consumes
+  ui/                      # ONE Avalonia .NET solution: shared views + platform heads (P/Invoke the C ABI)
+  apple/                   # Swift NE PacketTunnelProvider + Xcode packaging (app head + extension)
+  android/                 # VpnService glue (in the .NET Android head) + packaging (later)
+  windows/                 # privileged service + Wintun + installer (later)
   PLAN.md
 ```
 
 - `profile/` plus `config/` (split on purpose). `profile::Profile` is the parsed connection
-  profile: struct plus `serde` plus a mapper to the `hysteria` client's config
-  (TLS/QUIC/auth/bandwidth/obfs, including `obfsGecko`). It depends on `hysteria` types but no
-  parser, so the extension can hold a validated blob and build a client without linking the URI
-  parser. `config/` parses and validates the `hysteria2://` URI (including port-hopping) into
-  `profile::Profile`. It runs app-side at save time (§4) and is app-only. As it parses untrusted
-  input it ships a golden-corpus plus fuzz test (`cargo fuzz`).
+  profile — pure `serde` data (TLS/QUIC/auth/bandwidth/obfs, including `obfsGecko`), depending on
+  nothing but `serde` and holding no parser. The extension holds a validated blob without linking
+  the URI parser, and `hysteria` (not `profile`) owns the `&Profile -> client config` builder, so
+  `profile` stays a true leaf. `config/` parses and validates the `hysteria2://` URI (including
+  port-hopping) into `profile::Profile`; it runs app-side at save time (§4), is app-only, and ships
+  a golden-corpus plus fuzz test (`cargo fuzz`).
 - `store/` — `store::Entry { id, name, created_at, link: profile::Profile }` (the stored record
   holds a parsed profile, not a second `Profile`); add/delete/list only. `id` = UUID; dedup by
   normalized URI; `name` from the link's `#fragment`, else host. Non-secret metadata → one JSON
   doc written atomically to a platform container path; secret → `SecureStore`. The `SecureStore`
   trait is defined here (native-implemented, passed in at construction; §3.5); the extension uses
   a read-only view. No SQLite: a tiny ordered list needs no SQL engine.
-- `hysteria/` — the Hysteria 2 client (§6, Phase 3). On Quinn: the HTTP/3 auth handshake
-  (`h3`/`h3-quinn`), TCP relay over Quinn bidi streams and UDP relay over QUIC datagrams with
-  fragmentation, Brutal congestion control as a Quinn `congestion::Controller`, Salamander
-  obfuscation as a wrapping `AsyncUdpSocket`, and port hopping at the socket layer. Exposes a
-  library API (`tcp_connect`, UDP sessions, `Close`) plus a byte counter at the stream/session
-  boundary (the protocol carries no live counters). Maps connect failures into the `errkind` enum.
+- `hysteria/` — the Hysteria 2 client (§6, Phase 3); owns the `&profile::Profile -> client config`
+  builder. On Quinn: the HTTP/3 auth handshake (`h3`/`h3-quinn`), TCP relay over Quinn bidi streams
+  and UDP relay over QUIC datagrams with fragmentation, Brutal congestion control as a Quinn
+  `congestion::Controller`, Salamander obfuscation as a wrapping `AsyncUdpSocket`, and port hopping
+  at the socket layer (modules: transport, auth, proxy, frag, obfs, brutal). Exposes a library API
+  (`tcp_connect`, UDP sessions, `Close`) plus a byte counter at the stream/session boundary (the
+  protocol carries no live counters). Maps connect failures into the `conn-error` enum.
   Conformance-tested against the reference Hysteria 2 server (§6, §7).
 - `tunnel/` — `smoltcp` netstack (§3.2) plus `tun-rs` fd, driving the `hysteria` client: feed
   tun-rs packets into smoltcp, route each accepted flow to `hysteria::tcp_connect` or a UDP
   session, copy bytes both ways. Ext-only. Counts traffic at the smoltcp↔hysteria seam for the
   stats snapshot.
-- `errkind/` — a dependency-free leaf owning the connect-error enum (`AuthFailed |
-ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
-  not link `app`) and relayed up; both `tunnel`/`hysteria` and `app` depend on it, neither on the
-  other.
-- `app/` — the serialized `app` Model (the Model of Model–View). Depends on `config`, `store`,
-  `errkind`, `profile`, never `tunnel`/`hysteria` (connect is driven through the OS, §4).
+- `conn-error/` — a dependency-free leaf owning the connect-error enum (`AuthFailed |
+  ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
+  not link `model`) and relayed up; both `tunnel`/`hysteria` and `model` depend on it, neither on
+  the other.
+- `model/` — the serialized Model (the Model of Model–View) and the sole app-side facade. Depends
+  on `config`, `store`, `conn-error`, `profile`, never `tunnel`/`hysteria` (connect is driven
+  through the OS, §4).
   - State: `Vec<store::Entry>`, `selected_id`, OS-derived `ConnectionState` (owned here),
-      `last_error` (an `errkind` value).
+    `last_error` (a `conn-error` value).
   - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
   - One on-demand query `export_profile_uri(id) -> Vec<u8>` for the share view: reads the link
-      from `SecureStore` only when the user opens share, returns it as bytes, and never places the
-      URI in any state snapshot (snapshots stay secret-free; §7).
+    from `SecureStore` only when the user opens share, returns it as bytes, and never places the
+    URI in any state snapshot (snapshots stay secret-free; §7).
   - Two output channels, never merged: discrete state snapshots, and throttled stats.
   - `last_error` maps to one actionable UI sentence, no diagnostics screen.
-- `bind-app/` plus `bind-ext/` — the binding boundary; the only crates that produce C-ABI libs.
-  Two entry points: `bind-app: app_new(container_path, secure: SecureStore)` and
-  `bind-ext: tunnel_new(...)`. The observer surface (`StateObserver`, `SubscribeStats`) is
-  declared here as C-function-pointer callbacks; the internal crates stay decoupled behind Rust
-  channels. The contract is additive-only and versioned; every snapshot carries a `schema_version`.
+- `ffi-util/` plus `ffi-app/` plus `ffi-ext/` — the binding boundary; the only crates that produce
+  C-ABI libs, and the only crates allowed `unsafe`. `ffi-util` holds the shared machinery (handle
+  table, `catch_unwind` export wrapper, buffer/JSON helpers, `SecureStore` C-callback adapter).
+  Two entry points: `ffi-app: app_new(container_path, secure: SecureStore)` and
+  `ffi-ext: tunnel_new(...)`. The observer surface (`StateObserver`, `SubscribeStats`) is C function
+  pointers; exported symbols are prefixed (`hyapp_*` / `hyext_*`) so both libs coexist in one
+  process (Android). The contract is additive-only and versioned; every snapshot carries a
+  `schema_version`.
 
-Crate dependency DAG (must stay acyclic): `profile` and `errkind` are sinks. `config → profile`;
-`store → profile`; `hysteria → profile, errkind`; `tunnel → hysteria, profile, errkind`; `app →
-config, store, errkind, profile` (never `tunnel`/`hysteria`); `bind-app → app, store, config`;
-`bind-ext → tunnel, hysteria, store, errkind`. `bind-ext` must never reach `config` or `app` —
-enforced at compile time by Cargo deps plus a `cargo tree` CI gate (§3.8).
+Crate dependency DAG (must stay acyclic): `profile` (serde-only) and `conn-error` are sinks.
+`config → profile`; `store → profile`; `hysteria → profile, conn-error`; `tunnel → hysteria,
+profile, conn-error`; `model → config, store, conn-error, profile` (never `tunnel`/`hysteria`);
+`ffi-app → model, ffi-util`; `ffi-ext → tunnel, store, conn-error, profile, ffi-util`. `ffi-ext`
+must never reach `config` or `model` — enforced by Cargo deps plus an `xtask` `cargo tree`
+assertion (local and CI; §3.8).
 
 Link entry is an Avalonia text field, the universal add path (including Android TV). QR scanning
 is an optional shortcut only where a camera exists (camera → string → `AddProfileFromURI`). QR
@@ -318,8 +333,9 @@ the Avalonia layer displays it alongside a Copy button.
 
 ## 6. Roadmap
 
-1. Bootstrap the binding — `core/` cargo workspace; build a `staticlib`/`cdylib` with `csbindgen`
-   and P/Invoke a single exported function from an empty Avalonia desktop app.
+1. Bootstrap the binding — `core/` cargo workspace; build a `staticlib`/`cdylib` (driven by
+   `xtask`) with `csbindgen` and P/Invoke a single exported function from an empty Avalonia
+   desktop app.
 2. Memory spike — throwaway NE tunnel on a real iPhone: smoltcp plus a Quinn echo/dial, one
    hardcoded target, no UI. Measure RSS against the cap (§3.3); confirm smoltcp + Quinn + fd
    read/write run in the NE sandbox. Needs the entitlement in hand.
@@ -331,11 +347,11 @@ the Avalonia layer displays it alongside a Copy button.
 4. Config plus store — `config` parser (→ `profile::Profile`) with `cargo fuzz` plus corpus;
    `store` over a container path plus `SecureStore`, with dev stubs; wire the
    `cargo tree`/`cargo-deny` CI gates (§3.8).
-5. Model plus macOS UI (mocked tunnel) — `app` plus `bind-app`; the Avalonia desktop View (list /
+5. Model plus macOS UI (mocked tunnel) — `model` plus `ffi-app`; the Avalonia desktop View (list /
    add / share (link + Copy + QR) / delete / select / connect) over P/Invoke (§1). This View fans
    out to every platform (step 8).
 6. Real tunnel on macOS — `tunnel` (smoltcp plus tun-rs, driving the `hysteria` client) in
-   `bind-ext`; Swift NE extension linking the `staticlib`; App Group plus Keychain;
+   `ffi-ext`; Swift NE extension linking the `staticlib`; App Group plus Keychain;
    `ConnectionState` from `NEVPNStatus` (§4); status/stats IPC. Hidden defaults: full-tunnel
    route, autoconnect last profile.
 7. Add-link UX plus share — Avalonia text entry (the universal path, including Android TV) plus an
@@ -372,7 +388,7 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
    (`export_profile_uri`, §5) and never surfaces it in a state snapshot.
 5. No telemetry — zero analytics / third-party SDKs.
 6. Logging — release builds redact link, auth, and server address at the logger; the connect
-   error is mapped to an `errkind` int in the extension, so the server address cannot leak across
+   error is mapped to a `conn-error` int in the extension, so the server address cannot leak across
    the boundary.
 7. Supply chain and licensing — pin every crate; enforce with `cargo-deny` (license plus RustSec
    advisories) and a NuGet license scan. Prefer reproducible builds.
