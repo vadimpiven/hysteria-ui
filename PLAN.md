@@ -76,7 +76,8 @@ Each OS hands the tunnel a file descriptor, or (Windows) the core opens the adap
 Outline's netstack consumes a `network.IPDevice` — a plain `Read`/`Write`/`Close` over raw IP
 packets (`network/device.go:33`). On Apple/Android we wrap the handed-in **fd** as an `IPDevice`
 and `io.Copy` it against the lwIP device (§3.2); on Windows we open the **Wintun** adapter via
-permissive Go bindings (e.g. WireGuard's `wintun`, MIT) and wrap *that* as an `IPDevice`. No
+WireGuard's `wintun` Go bindings (MIT) — which `LoadLibrary` the bundled `wintun.dll` (§3.7) — and
+wrap *that* as an `IPDevice`. No
 privileged route/iptables work lives in the core — the OS (Apple `NEPacketTunnelNetworkSettings`,
 Android `VpnService`) or the app (Windows service) sets routes.
 
@@ -157,6 +158,15 @@ links everything. The pieces:
 
 - `apernet/hysteria/core` — **MIT**; the client is a clean, maintainer-blessed library import.
 - `golang.getoutline.org/sdk` — **Apache-2.0**; `go-tun2socks` wrapper **MIT**, lwIP C core **BSD-3**.
+- `golang.zx2c4.com/wintun` (Windows) — the Go bindings are **MIT**, but they `LoadLibrary`
+  a separate **`wintun.dll`** — a bundled *binary* dependency, not a Go module. Its source is GPLv2,
+  but the prebuilt signed DLL from wintun.net ships under a *more permissive* license whose §3d
+  grants redistribution **alongside software that uses it only via the public `wintun.h` API** — no
+  written consent needed. So we vendor the signed DLL into the installer (we don't rebrand it as
+  "Wintun" — trademark), pinned to a fixed version with **build-time checksum + Authenticode
+  verification** (the Mullvad model). It's WireGuard-LLC-kernel-signed; we redistribute as-is and
+  never sign the driver ourselves. End users download nothing separately. `[Supply-chain note: we
+  depend on WireGuard LLC's MS signing standing — pin a known-good DLL rather than fetch latest.]`
 - `apernet/sing-tun` — **GPL-3.0**. Linking it makes the whole binary a combined GPL-3.0 work on
   distribution, widely held **incompatible with the Apple App Store** (the VLC precedent; FSF's
   standing position). sing-box ships on the App Store only because its author *is* sing-tun's
