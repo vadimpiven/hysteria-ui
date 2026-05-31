@@ -3,7 +3,7 @@
 Native Hysteria 2 client apps over a shared Rust core (the app Model plus the Hysteria client —
 all state, logic, and protocol) and a single shared .NET/Avalonia View (the UI). Only the thin
 OS-integration shims (TUN provider, secure store) are platform-specific. Build order: macOS,
-then iOS/iPadOS, Android/Android TV, Windows, Linux.
+then iOS/iPadOS, Android/Android TV, Windows.
 
 Features (v1): add a profile (enter a `hysteria2://` link — type it, or scan its QR where there
 is a camera), share a profile (show its link with a Copy button plus a QR code), delete a
@@ -61,11 +61,11 @@ The runtime tree is permissive (MIT / Apache-2.0 / 0BSD / ISC); `cargo-deny` kee
                           │  staticlib / cdylib  — ONE C ABI, every target
                           ▼  P/Invoke
               Single .NET / Avalonia View — shared by ALL platforms
-              (macOS · iOS/iPadOS · Android(+TV) · Windows · Linux)
+              (macOS · iOS/iPadOS · Android(+TV) · Windows)
 
    Platform-native shims (each in its own language, behind the core):
      Apple → Swift NE PacketTunnelProvider      Android → VpnService
-     Windows → service + Wintun                 Linux → systemd daemon + /dev/net/tun
+     Windows → service + Wintun
 ```
 
 Model–View with the Model in Rust and a single shared .NET/Avalonia View. The View renders a
@@ -103,19 +103,17 @@ State flows one way: tunnel → OS → app observes → snapshot → UI (§4).
 
 Each OS hands the tunnel a file descriptor, or (Windows) the core opens the adapter:
 
-| Platform             | Mechanism                                         | Core receives            |
-|----------------------|---------------------------------------------------|--------------------------|
-| iOS / iPadOS / macOS | NetworkExtension Packet Tunnel Provider           | utun fd                  |
-| Android / Android TV | `VpnService.establish()` → `ParcelFileDescriptor` | fd                       |
-| Windows              | Wintun adapter (kernel driver)                    | core opens it directly   |
-| Linux                | `/dev/net/tun` via `ioctl(TUNSETIFF)` (kernel)    | daemon opens it directly |
+| Platform             | Mechanism                                         | Core receives          |
+|----------------------|---------------------------------------------------|------------------------|
+| iOS / iPadOS / macOS | NetworkExtension Packet Tunnel Provider           | utun fd                |
+| Android / Android TV | `VpnService.establish()` → `ParcelFileDescriptor` | fd                     |
+| Windows              | Wintun adapter (kernel driver)                    | core opens it directly |
 
 `tun-rs` is the cross-platform fd/device wrapper: on Apple/Android we hand it the OS-provided fd;
-on Windows it opens the Wintun adapter (bundled `wintun.dll`, §3.7); on Linux the privileged
-daemon opens `/dev/net/tun` (`ioctl(TUNSETIFF)`, needs `CAP_NET_ADMIN`). Either way it yields raw
-IP packets that feed the `smoltcp` netstack (§3.2). No privileged route/iptables work lives in
-the core: the OS (Apple `NEPacketTunnelNetworkSettings`, Android `VpnService`) or the privileged
-side (Windows service; Linux daemon via netlink/rtnetlink) sets routes.
+on Windows it opens the Wintun adapter (bundled `wintun.dll`, §3.7). Either way it yields raw IP
+packets that feed the `smoltcp` netstack (§3.2). No privileged route/iptables work lives in the
+core: the OS (Apple `NEPacketTunnelNetworkSettings`, Android `VpnService`) or the Windows service
+sets routes.
 
 ### 3.2 Userspace netstack: smoltcp
 
@@ -146,7 +144,7 @@ cap is generous. The Phase-2 spike measures it on-device (§6).
 
 The View is a single .NET/Avalonia app (§2), so every platform consumes the core through the same
 C ABI via P/Invoke. The core builds as a Rust `staticlib` (statically linked on Apple, including
-the NE extension) or `cdylib` `.so`/`.dll` (Linux/Windows/Android), and `csbindgen` generates the
+the NE extension) or `cdylib` `.so`/`.dll` (Windows/Android), and `csbindgen` generates the
 C# P/Invoke bindings. A C ABI exports only primitives, byte buffers (`*const u8` plus len),
 ints-for-errors, and C-function-pointer callbacks — no generics, maps, or rich slices. So `bind-*`
 is flat:
@@ -164,8 +162,6 @@ The `hysteria2://` link is a bearer credential, read/written via a native `Secur
   before first unlock).
 - Android — Keystore-wrapped AES-GCM (hardware-backed where available).
 - Windows — DPAPI (`CryptProtectData`, per-user).
-- Linux — the Secret Service API over D-Bus (gnome-keyring / KWallet), collection-locked with the
-  login session. Reached over D-Bus, so nothing LGPL is linked (§3.7).
 
 The `SecureStore` trait is defined in the Rust `store` crate (consumer-side) and implemented in
 C# in the app on every platform; on Apple the NE extension additionally reads the secret itself
@@ -186,9 +182,7 @@ GPL/LGPL/MPL):
 - Our code is dual `Apache-2.0 OR MIT` (`LICENSE-*` at root).
 - `quinn`, `tun-rs`, `tokio`, `h3` (MIT/Apache-2.0), `rustls` (Apache/ISC/MIT), `smoltcp` (0BSD),
   crypto provider (`ring` ISC-style / `aws-lc-rs` Apache/ISC).
-- .NET runtime plus BCL (MIT), Avalonia (MIT), SkiaSharp (MIT, over Skia BSD-3). On Linux the
-  secret store is reached over the Secret Service D-Bus API, so LGPL `libsecret`/GTK are never
-  linked.
+- .NET runtime plus BCL (MIT), Avalonia (MIT), SkiaSharp (MIT, over Skia BSD-3).
 - Windows Wintun — `tun-rs` uses the bundled `wintun.dll` (the signed build from wintun.net,
   redistributable via its §3d API-use grant). Vendor the signed DLL into the installer, pinned
   with a build-time checksum plus Authenticode verification; redistribute as-is, never sign the
@@ -200,7 +194,7 @@ confirm with counsel before release.]
 ### 3.8 Cross-compilation and the app/ext wall
 
 Rust cross-compiles with cargo: Apple device plus simulator slices (`aarch64-apple-ios`, `*-sim`,
-`*-darwin`, lipo'd into an xcframework), Android (`cargo-ndk`), Windows (MSVC or GNU), Linux.
+`*-darwin`, lipo'd into an xcframework), Android (`cargo-ndk`), Windows (MSVC or GNU).
 `csbindgen` emits the Rust `extern "C"` plus C# bindings. The crypto provider
 (`ring`/`aws-lc-rs`) carries some C/asm, but cargo handles it per target.
 
@@ -216,13 +210,13 @@ lever for the iOS cap, §3.3).
 
 This is where VPN clients usually break, so the contract is explicit.
 
-- The OS owns connection state. `NEVPNStatus` / `VpnService` / the Windows service / the Linux
-  daemon is authoritative: the user can toggle the VPN from OS settings, and the OS can tear it
+- The OS owns connection state. `NEVPNStatus` / `VpnService` / the Windows service is
+  authoritative: the user can toggle the VPN from OS settings, and the OS can tear it
   down or memory-kill the extension. So `app` derives `ConnectionState` from OS status events,
   never optimistically. One-way flow: tunnel → OS status → app observes → snapshot → UI.
-- A privileged tunnel process, walled from the app. On Apple (NE extension), Windows (service),
-  and Linux (systemd daemon) the tunnel runs in a separate privileged process with no shared
-  heap; on Android it shares the app process (the wall is then logical). The two binding crates
+- A privileged tunnel process, walled from the app. On Apple (NE extension) and Windows
+  (service) the tunnel runs in a separate privileged process with no shared heap; on Android it
+  shares the app process (the wall is then logical). The two binding crates
   link disjoint crate subsets: `bind-app` → `{profile, config, store, app}`; `bind-ext` →
   `{profile, store (read), hysteria, tunnel, errkind}` only, never `config` or `app`. Profiles are
   validated app-side at save time, and the tunnel consumes a minimal validated blob — a serialized
@@ -232,9 +226,8 @@ This is where VPN clients usually break, so the contract is explicit.
   .NET. The crate-dependency wall (§3.8) holds on every platform, even where (Android) it is one
   process.
 - The tunnel process is self-sufficient. On autoconnect/on-demand it may start with the app not
-  running; it reads the active profile and secret itself (Apple: App Group plus Keychain; Linux:
-  config dir plus Secret Service; Windows: per-user store plus DPAPI). The app/GUI is never on the
-  connect path.
+  running; it reads the active profile and secret itself (Apple: App Group plus Keychain; Windows:
+  per-user store plus DPAPI). The app/GUI is never on the connect path.
 - Concurrency. P/Invoke calls Rust from arbitrary .NET threads; the tunnel runs on a
   single-threaded `tokio` runtime (Quinn is async). So `app` is a serialized actor (one task
   draining an `mpsc` intent channel); intents are non-blocking and return immediately; results
@@ -263,7 +256,6 @@ hysteria-ui/
   apple/                  # Swift NE PacketTunnelProvider + Xcode packaging (app head + extension)
   android/                # VpnService glue (in the .NET Android head) + packaging (later)
   windows/                # privileged service + Wintun + installer (later)
-  linux/                  # privileged systemd daemon + packaging: Flatpak/AppImage/deb/rpm (later)
   PLAN.md
 ```
 
@@ -351,8 +343,7 @@ the Avalonia layer displays it alongside a Copy button.
    button (clipboard marked sensitive / local-only / auto-expiring; §7) plus its QR.
 8. Fan out — only the OS shim, secure store, and packaging are new per platform: iOS/iPadOS (reuse
    the Swift NE extension; Avalonia iOS head), Android/Android TV (`VpnService` in the .NET Android
-   head; D-pad focus pass), Windows (privileged service plus Wintun plus installer), Linux
-   (privileged systemd daemon over `/dev/net/tun` plus Secret Service; Flatpak/AppImage/deb/rpm).
+   head; D-pad focus pass), Windows (privileged service plus Wintun plus installer).
 
 ---
 
@@ -364,8 +355,7 @@ data-protection; network MITM → TLS pinning; supply chain → pinned crates pl
 implementation bugs → memory-safe Rust plus conformance/fuzz testing.
 
 1. At rest — links only in the secure store (§3.5); the JSON doc holds no auth and uses
-   `NSFileProtectionCompleteUntilFirstUserAuthentication` on Apple, `0600` perms under
-   `$XDG_CONFIG_HOME` on Linux.
+   `NSFileProtectionCompleteUntilFirstUserAuthentication` on Apple.
 2. In memory — secrets cross the boundary as byte buffers (not C strings), zeroized after a
    connect via `zeroize`.
 3. Transport — the link carries only `sni`, `insecure`, `pinSHA256` (auth in userinfo); a custom
@@ -391,9 +381,7 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
    audit of `hysteria/`.
 9. Distribution and least privilege — sign plus notarize on Apple, requesting only NE / App-Group
    / Keychain entitlements; signed non-debuggable Android release; Authenticode-signed Windows DLL
-   plus installer over the signed Wintun driver; Linux via Flatpak (sandboxed) / AppImage / distro
-   packages, with the systemd daemon granted only `CAP_NET_ADMIN` (not full root) and the GUI
-   unprivileged.
+   plus installer over the signed Wintun driver.
 
 ---
 
@@ -404,8 +392,8 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
 - Store publishing org entity — Apple (Guideline 5.4) and Google Play both require organization
   enrollment plus D-U-N-S to publish a VPN; an individual account cannot. One legal entity (LLC or
   non-profit) covers both. Off-store routes need no entity: macOS Developer-ID-notarized, Android
-  via APK/F-Droid, Windows outside the Microsoft Store, Linux via Flathub / distro repos. Gates
-  release only. [Decision deferred until the core works.]
+  via APK/F-Droid, Windows outside the Microsoft Store. Gates release only. [Decision deferred
+  until the core works.]
 - App Store Guideline 5.4 — use NEVPNManager; the privacy policy commits to no third-party data
   sale; declare data collection before use.
 - Acknowledgements bundle — generate a third-party-notices screen at build time spanning both
@@ -426,6 +414,6 @@ Crate APIs:
   obfs plus port-hop); `TransportConfig`.
 - `smoltcp` — `Interface` plus sockets (the userspace TCP/IP stack); fed by tun-rs, flows routed
   to the `hysteria` client.
-- `tun-rs` — cross-platform TUN device / fd wrapper (utun, `/dev/net/tun`, Wintun, OS-provided
+- `tun-rs` — cross-platform TUN device / fd wrapper (utun, Wintun, OS-provided
   fd).
 - `h3` plus `h3-quinn` — HTTP/3 for the auth handshake over the Quinn connection.
