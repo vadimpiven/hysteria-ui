@@ -126,8 +126,8 @@ a proxied path through the Hysteria client (§5, `hysteria/`):
 - UDP flow → a Hysteria UDP session over QUIC datagrams (RFC 9221, `Connection::send_datagram`)
 
 No raw sockets, no route table, no iptables — just the fd plus outbound QUIC dials, all permitted
-in the iOS NE sandbox. [Validate smoltcp + Quinn + fd writes in the NE sandbox in the Phase-2
-spike (§6).]
+in the iOS NE sandbox. [Validate smoltcp + Quinn + fd writes in the NE sandbox at the iOS memory
+gate (§6, step 3).]
 
 ### 3.3 iOS NE memory budget
 
@@ -136,7 +136,8 @@ reports (iPhone 14 Pro Max, iOS 17.3.1) show kills above ~15 MB, so design to 15
 50 MB as an unreliable ceiling. The material weight is Quinn's send/receive buffers plus smoltcp's
 packet buffers, both bounded and tunable. Engineer the ceiling: bound the buffer pools, cap
 concurrent flows, keep a single-threaded runtime in the extension. iOS is the constraint; macOS's
-cap is generous. The Phase-2 spike measures it on-device (§6).
+cap is generous. The iOS memory gate measures it on-device against the real `tunnel/` crate
+(§6, step 3).
 
 ### 3.4 Binding surface is flat — one C ABI for every platform
 
@@ -201,7 +202,14 @@ Build orchestration is `mise` plus TypeScript. `mise.toml` is the single source 
 versions (Rust, `cargo-ndk`, `cargo-deny`, Node, pnpm, …) and tasks, so contributors install
 nothing globally and run `mise run <task>`. Multi-step logic — per-target builds, the xcframework
 lipo, `csbindgen` generation into `bindings/`, packaging — lives in TypeScript under `scripts/`,
-run via Node; per-package steps go through pnpm scripts.
+run via Node; per-package steps go through pnpm scripts. A `mise run hysteria-server` task fetches
+the pinned reference server (rev `c3a806b`) under a checksum, generates the self-signed cert plus
+its `pinSHA256`, and runs it with known auth — first-class test infrastructure from the first
+commit, backing both the `devproxy` conformance loop (§5) and the cert-pinning path (§7.3).
+
+The dependency-wall and supply-chain gates (`cargo-deny`, the `cargo tree` wall assertion below,
+`[workspace.lints]`) are scaffolded in the first commit so the wall — a structural invariant —
+holds from the moment crates start growing edges (§6, step 0).
 
 The app/extension wall is a compile-time crate-dependency guarantee: `ffi-ext` does not depend on
 `config` (the parser) or `model` (the state machine) in its `Cargo.toml`, so they cannot link in;
@@ -266,7 +274,9 @@ hysteria-ui/
       ffi-util/            # handle table, catch_unwind export wrapper, buffer/JSON helpers, SecureStore C-callback adapter
       ffi-app/             # cdylib+staticlib (symbols hyapp_*): extern "C" + csbindgen; deps: model, ffi-util
       ffi-ext/             # cdylib+staticlib (symbols hyext_*): extern "C" + csbindgen; deps: tunnel, store, conn-error, profile, ffi-util
+      devproxy/            # DEV-ONLY bin: local test harness over the hysteria client; swappable front-ends --socks5 / --tun; deps: hysteria, tunnel, profile; never linked into any ffi-* lib
     fuzz/                  # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
+    testdata/              # mise-managed: pinned reference Hysteria 2 server (rev c3a806b) + self-signed cert + computed pinSHA256 + known auth; the conformance fixture
   bindings/                # generated + committed: C header + C# P/Invoke (csbindgen output); core/ produces, ui/ consumes
   ui/                      # ONE Avalonia .NET solution: shared views + platform heads (P/Invoke the C ABI)
   apple/                   # Swift NE PacketTunnelProvider + Xcode packaging (app head + extension)
@@ -288,18 +298,30 @@ hysteria-ui/
   doc written atomically to a platform container path; secret → `SecureStore`. The `SecureStore`
   trait is defined here (native-implemented, passed in at construction; §3.5); the extension uses
   a read-only view. No SQLite: a tiny ordered list needs no SQL engine.
-- `hysteria/` — the Hysteria 2 client (§6, Phase 3); owns the `&profile::Profile -> client config`
+- `hysteria/` — the Hysteria 2 client (§6, step 1); owns the `&profile::Profile -> client config`
   builder. On Quinn: the HTTP/3 auth handshake (`h3`/`h3-quinn`), TCP relay over Quinn bidi streams
   and UDP relay over QUIC datagrams with fragmentation, Brutal congestion control as a Quinn
   `congestion::Controller`, Salamander obfuscation as a wrapping `AsyncUdpSocket`, and port hopping
   at the socket layer (modules: transport, auth, proxy, frag, obfs, brutal). Exposes a library API
   (`tcp_connect`, UDP sessions, `Close`) plus a byte counter at the stream/session boundary (the
   protocol carries no live counters). Maps connect failures into the `conn-error` enum.
-  Conformance-tested against the reference Hysteria 2 server (§6, §7).
+  Conformance-tested against the reference Hysteria 2 server (§6, §7). This library API is the
+  front-end seam: `hysteria` never assumes who drives it. Front-ends are interchangeable consumers —
+  the TUN netstack (`tunnel/`) for the system-wide VPN, and the SOCKS5 listener (`devproxy`) for a
+  per-app/browser proxy. Keeping that seam clean leaves the door open to promoting SOCKS5 to a
+  shippable front-end later (e.g. a pure-Rust native-messaging host that a browser extension points
+  `chrome.proxy` at — bypassing the C ABI and .NET entirely); out of v1 scope, an invariant to
+  preserve.
 - `tunnel/` — `smoltcp` netstack (§3.2) plus `tun-rs` fd, driving the `hysteria` client: feed
   tun-rs packets into smoltcp, route each accepted flow to `hysteria::tcp_connect` or a UDP
-  session, copy bytes both ways. Ext-only. Counts traffic at the smoltcp↔hysteria seam for the
-  stats snapshot.
+  session, copy bytes both ways. Among shipped libs, ext-only (the dev `devproxy --tun` also drives
+  it). Counts traffic at the smoltcp↔hysteria seam for the stats snapshot.
+- `devproxy/` — a dev-only binary, the local test loop that validates the protocol before any
+  OS/TUN/FFI/UI exists. It drives the `hysteria` client off a hardcoded `profile::Profile` behind
+  swappable front-ends: `--socks5` (TCP `CONNECT` plus UDP `ASSOCIATE`, covering both the TCP relay
+  and the UDP/datagram relay) and `--tun` (the `tunnel` netstack over a root-opened utun on macOS).
+  Excluded from the shipped surface; never linked into any `ffi-*` lib. Tested against the
+  mise-managed local server (below); the same `--tun` build is what the iOS memory gate measures.
 - `conn-error/` — a dependency-free leaf owning the connect-error enum (`AuthFailed |
   ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
   not link `model`) and relayed up; both `tunnel`/`hysteria` and `model` depend on it, neither on
@@ -340,33 +362,55 @@ the Avalonia layer displays it alongside a Copy button.
 
 ## 6. Roadmap
 
-1. Bootstrap the binding — `core/` cargo workspace; build a `staticlib`/`cdylib` (via a `mise`
-   task) with `csbindgen` and P/Invoke a single exported function from an empty Avalonia desktop
-   app.
-2. Memory spike — throwaway NE tunnel on a real iPhone: smoltcp plus a Quinn echo/dial, one
-   hardcoded target, no UI. Measure RSS against the cap (§3.3); confirm smoltcp + Quinn + fd
-   read/write run in the NE sandbox. Needs the entitlement in hand.
-3. Implement the Hysteria 2 client (`hysteria/`) — developed standalone (no TUN yet): h3 auth
-   handshake, TCP relay, UDP/datagram relay plus fragmentation, Brutal as a Quinn
-   `congestion::Controller` (validate its pacing maps onto Quinn's pacer), Salamander obfs, port
-   hopping. Conformance-test against the reference Hysteria 2 server (round-trip TCP plus UDP,
-   with and without obfs), pinned to reference revision `c3a806b`.
-4. Config plus store — `config` parser (→ `profile::Profile`) with `cargo fuzz` plus corpus;
-   `store` over a container path plus `SecureStore`, with dev stubs; wire the
-   `cargo tree`/`cargo-deny` CI gates (§3.8).
-5. Model plus macOS UI (mocked tunnel) — `model` plus `ffi-app`; the Avalonia desktop View (list /
-   add / share (link + Copy + QR) / delete / select / connect) over P/Invoke (§1). This View fans
-   out to every platform (step 8).
-6. Real tunnel on macOS — `tunnel` (smoltcp plus tun-rs, driving the `hysteria` client) in
-   `ffi-ext`; Swift NE extension linking the `staticlib`; App Group plus Keychain;
-   `ConnectionState` from `NEVPNStatus` (§4); status/stats IPC. Hidden defaults: full-tunnel
-   route, autoconnect last profile.
-7. Add-link UX plus share — Avalonia text entry (the universal path, including Android TV) plus an
-   optional QR scanner where there is a camera; per-profile share view: the link with a Copy
-   button (clipboard marked sensitive / local-only / auto-expiring; §7) plus its QR.
+Core-first: retire the two hardest risks early — protocol correctness and the iOS memory ceiling
+(§3.3) — before any OS/FFI/UI investment is built on top of them. The protocol is validated through
+a dev SOCKS5/TUN harness (`devproxy`, §5) against a mise-managed local server (§3.8); FFI and UI
+come once the core is proven.
+
+0. Workspace plus guardrails — `core/` virtual manifest with empty crate skeletons,
+   `[workspace.dependencies]`/`[workspace.lints]` (`unsafe_code = "forbid"` except `ffi-*`),
+   `mise.toml` pinned toolchain, and the supply-chain/wall gates (`cargo-deny` plus the `cargo tree`
+   wall assertion, §3.8) wired in CI from the first commit. Enroll in the paid Apple Developer
+   Program and enable the Network Extensions capability (§3.6) — required for the on-device memory
+   gate (step 3).
+1. Hysteria 2 client plus local SOCKS5 loop — `profile/` (leaf), `conn-error/`, and `hysteria/`
+   (h3 auth handshake, TCP relay, UDP/datagram relay plus fragmentation, Brutal as a Quinn
+   `congestion::Controller` — validate its pacing maps onto Quinn's pacer — Salamander obfs, port
+   hopping), driven off a hardcoded `profile::Profile`. `devproxy --socks5` exposes the client as a
+   local proxy: TCP `CONNECT` first, then UDP `ASSOCIATE` (SOCKS5 exercises the UDP/datagram relay,
+   the riskiest path). Conformance against the mise-managed pinned reference server (rev `c3a806b`):
+   `curl` over TCP and `dig` over UDP, with and without obfs, plus the `pinSHA256` cert-pin path
+   (§7.3).
+2. Userspace TUN, standalone — `tunnel/` (smoltcp plus tun-rs) added as `devproxy --tun`: on macOS
+   open a utun via raw fd as root — no NE, no FFI — feed packets through smoltcp into the proven
+   `hysteria` client. Validates the netstack end-to-end against the same local server; counts bytes
+   at the smoltcp↔hysteria seam.
+3. iOS memory gate — a minimal `staticlib` → Swift `PacketTunnelProvider` linking the `tunnel/`
+   crate, one hardcoded target, no UI. Measure RSS against the ~15 MB cap (§3.3) on a real device;
+   tune Quinn/smoltcp buffer pools until it fits; confirm smoltcp + Quinn + fd read/write run in the
+   NE sandbox. Doubles as the minimal staticlib + xcframework + cross-compile de-risk (the full
+   `csbindgen` C# binding comes at step 5). Existential gate — must pass before the fan-out (step 8)
+   is committed. Needs the capability from step 0; runs in parallel with step 4.
+4. Config plus store (mock secrets) — `config` parser (→ `profile::Profile`) with `cargo fuzz` plus
+   golden corpus; `store` over a container path with the `SecureStore` trait plus a dev-stub impl.
+   Off the protocol critical path (shares only the `profile/` leaf) — parallelizable with steps 2–3.
+5. Model plus macOS UI (mocked tunnel) — `model` plus `ffi-app` plus `csbindgen`; the Avalonia
+   desktop View (list / add / share (link + Copy + QR) / delete / select / connect) over P/Invoke
+   (§1), against a mocked tunnel. First real exercise of the Model–View contract: snapshots/intents,
+   observer callbacks, Avalonia `Dispatcher.UIThread` marshaling. This View fans out to every
+   platform (step 8).
+6. Real tunnel on macOS — `ffi-ext` linking `tunnel/`; the Swift NE extension from step 3 wired for
+   real; App Group plus Keychain; `ConnectionState` from `NEVPNStatus` (§4); status/stats IPC.
+   Hidden defaults: full-tunnel route, autoconnect last profile.
+7. Native secure store plus add-link/share UX — replace the dev stub with the native `SecureStore`
+   (Keychain first, §3.5), now that `model` (app) and the extension (read) consume it; Avalonia text
+   entry (the universal path, including Android TV) plus an optional QR scanner where there is a
+   camera; per-profile share view: the link with a Copy button (clipboard marked sensitive /
+   local-only / auto-expiring; §7) plus its Rust-rendered QR.
 8. Fan out — only the OS shim, secure store, and packaging are new per platform: iOS/iPadOS (reuse
    the Swift NE extension; Avalonia iOS head), Android/Android TV (`VpnService` in the .NET Android
-   head; D-pad focus pass), Windows (privileged service plus Wintun plus installer).
+   head; Keystore store; D-pad focus pass), Windows (privileged service plus Wintun plus DPAPI store
+   plus installer).
 
 ---
 
@@ -411,7 +455,11 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
 ## 8. Release gates and open decisions
 
 - Crypto provider — pick the `rustls` provider (`ring` vs `aws-lc-rs`) by binary size and
-  build-friendliness on iOS/Android. [Decide in the Phase-2 spike.]
+  build-friendliness on iOS/Android. [Decide at the iOS memory gate, step 3, where it is measured
+  against the cap.]
+- Apple Network-Extension entitlement — a paid account suffices to build/test (§3.6); enable the
+  Network Extensions capability before the memory gate (step 3). Org enrollment is App-Store-only
+  (publishing entity, below).
 - Store publishing org entity — Apple (Guideline 5.4) and Google Play both require organization
   enrollment plus D-U-N-S to publish a VPN; an individual account cannot. One legal entity (LLC or
   non-profit) covers both. Off-store routes need no entity: macOS Developer-ID-notarized, Android
