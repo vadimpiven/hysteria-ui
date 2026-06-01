@@ -13,7 +13,8 @@ Dependencies (pinned to exact versions at integration; enforced by `cargo-deny`)
 
 - `quinn` — QUIC (MIT/Apache-2.0); its public `congestion::Controller` trait carries Hysteria's
   Brutal congestion control. Fallback: `s2n-quic`.
-- `rustls` — TLS (Apache-2.0/ISC/MIT); provider `ring` vs `aws-lc-rs` decided at integration.
+- `rustls` — TLS (Apache-2.0/ISC/MIT) with the `aws-lc-rs` provider (Apache/ISC); `ring` is the
+  named fallback.
 - `smoltcp` — userspace netstack (0BSD). Fallback: `ipstack`.
 - `tun-rs` — TUN device / fd wrapper (MIT/Apache-2.0). Fallback: raw fd + `wintun` crate.
 - `h3` + `h3-quinn` — HTTP/3 auth handshake. `tokio` — async runtime (MIT).
@@ -75,7 +76,7 @@ State flows one way: tunnel → OS → model observes → snapshot → UI (§4).
 ### 2.1 Layers
 
 | Layer                          | Component                                                     |
-|--------------------------------|---------------------------------------------------------------|
+| ------------------------------ | ------------------------------------------------------------- |
 | UI / View                      | `ui/` — Avalonia (.NET), one shared View                      |
 | FFI binding                    | `ffi-app` / `ffi-ext` / `ffi-util` (`extern "C"` + csbindgen) |
 | Model (state machine)          | `model/` — async actor: snapshots + intents                   |
@@ -97,12 +98,17 @@ State flows one way: tunnel → OS → model observes → snapshot → UI (§4).
 
 ## 3. Constraints that shape the design
 
+Platform baselines (minimum OS versions): iOS/iPadOS 15, macOS 13, Windows 10, Android `minSdk` 28
+(Android 9 — `VpnService` plus Keystore fully supported, reaching most Android TV boxes). These set
+which OS APIs the design may rely on (e.g. the iOS NE memory cap story, §3.3; the best-effort
+sensitive-clipboard flag, §7.4).
+
 ### 3.1 TUN is platform-mediated; one netstack serves all
 
 Each OS hands the tunnel a file descriptor, or (Windows) the core opens the adapter:
 
 | Platform             | Mechanism                                         | Core receives          |
-|----------------------|---------------------------------------------------|------------------------|
+| -------------------- | ------------------------------------------------- | ---------------------- |
 | iOS / iPadOS / macOS | NetworkExtension Packet Tunnel Provider           | utun fd                |
 | Android / Android TV | `VpnService.establish()` → `ParcelFileDescriptor` | fd                     |
 | Windows              | Wintun adapter (kernel driver)                    | core opens it directly |
@@ -181,7 +187,7 @@ GPL/LGPL/MPL):
 
 - Our code is dual `Apache-2.0 OR MIT` (`LICENSE-*` at root).
 - `quinn`, `tun-rs`, `tokio`, `h3` (MIT/Apache-2.0), `rustls` (Apache/ISC/MIT), `smoltcp` (0BSD),
-  crypto provider (`ring` ISC-style / `aws-lc-rs` Apache/ISC).
+  crypto provider (`aws-lc-rs` Apache/ISC; `ring` ISC-style fallback).
 - .NET runtime plus BCL (MIT), Avalonia (MIT), SkiaSharp (MIT, over Skia BSD-3).
 - Windows Wintun — `tun-rs` uses the bundled `wintun.dll` (the signed build from wintun.net,
   redistributable via its §3d API-use grant). Vendor the signed DLL into the installer, pinned
@@ -195,11 +201,13 @@ confirm with counsel before release.]
 
 Rust cross-compiles with cargo: Apple device plus simulator slices (`aarch64-apple-ios`, `*-sim`,
 `*-darwin`, lipo'd into an xcframework), Android (`cargo-ndk`), Windows (MSVC or GNU).
-`csbindgen` emits the Rust `extern "C"` plus C# bindings. The crypto provider
-(`ring`/`aws-lc-rs`) carries some C/asm, but cargo handles it per target.
+`csbindgen` emits the Rust `extern "C"` plus C# bindings. The crypto provider (`aws-lc-rs`) carries
+C/asm and needs a C toolchain plus CMake (and NASM on the Windows target); these are pinned in
+`mise.toml` (below), so cargo builds it per target.
 
 Build orchestration is `mise` plus TypeScript. `mise.toml` is the single source of truth for tool
-versions (Rust, `cargo-ndk`, `cargo-deny`, Node, pnpm, …) and tasks, so contributors install
+versions (Rust, `cargo-ndk`, `cargo-deny`, CMake plus a C toolchain and NASM-on-Windows for
+`aws-lc-rs`, Node, pnpm, …) and tasks, so contributors install
 nothing globally and run `mise run <task>`. Multi-step logic — per-target builds, the xcframework
 lipo, `csbindgen` generation into `bindings/`, packaging — lives in TypeScript under `scripts/`,
 run via Node; per-package steps go through pnpm scripts. A `mise run hysteria-server` task fetches
@@ -236,9 +244,9 @@ This is where VPN clients usually break, so the contract is explicit.
   (service) the tunnel runs in a separate privileged process with no shared heap; on Android it
   shares the app process (the wall is then logical). The two FFI crates link disjoint subsets:
   `ffi-app` → `model` (the sole app-side facade); `ffi-ext` → `{tunnel, store (read), conn-error,
-  profile, ffi-util}`, never `config` or `model`. Profiles are
-  validated app-side at save time, and the tunnel consumes a minimal validated blob — a serialized
-  `profile::Profile`, deserialized without linking the parser (which is why `profile` is its own
+profile, ffi-util}`, never `config` or `model`. Profiles are
+  validated app-side at save time, and the tunnel consumes a minimal validated blob — a
+  `profile::Profile` serialized as JSON, deserialized without linking the parser (which is why `profile` is its own
   crate, apart from `config`). The .NET/Avalonia runtime lives only in the app process; the
   privileged side is a native shim (Swift / service / daemon) plus the Rust `staticlib`, never
   .NET. The crate-dependency wall (§3.8) holds on every platform, even where (Android) it is one
@@ -323,20 +331,20 @@ hysteria-ui/
   Excluded from the shipped surface; never linked into any `ffi-*` lib. Tested against the
   mise-managed local server (below); the same `--tun` build is what the iOS memory gate measures.
 - `conn-error/` — a dependency-free leaf owning the connect-error enum (`AuthFailed |
-  ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
+ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
   not link `model`) and relayed up; both `tunnel`/`hysteria` and `model` depend on it, neither on
   the other.
 - `model/` — the serialized Model (the Model of Model–View) and the sole app-side facade. Depends
   on `config`, `store`, `conn-error`, `profile`, never `tunnel`/`hysteria` (connect is driven
   through the OS, §4).
-  - State: `Vec<store::Entry>`, `selected_id`, OS-derived `ConnectionState` (owned here),
-    `last_error` (a `conn-error` value).
-  - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
-  - One on-demand query `export_profile_uri(id) -> Vec<u8>` for the share view: reads the link
-    from `SecureStore` only when the user opens share, returns it as bytes, and never places the
-    URI in any state snapshot (snapshots stay secret-free; §7).
-  - Two output channels, never merged: discrete state snapshots, and throttled stats.
-  - `last_error` maps to one actionable UI sentence, no diagnostics screen.
+    - State: `Vec<store::Entry>`, `selected_id`, OS-derived `ConnectionState` (owned here),
+      `last_error` (a `conn-error` value).
+    - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
+    - One on-demand query `export_profile_uri(id) -> Vec<u8>` for the share view: reads the link
+      from `SecureStore` only when the user opens share, returns it as bytes, and never places the
+      URI in any state snapshot (snapshots stay secret-free; §7).
+    - Two output channels, never merged: discrete state snapshots, and throttled stats.
+    - `last_error` maps to one actionable UI sentence, no diagnostics screen.
 - `ffi-util/` plus `ffi-app/` plus `ffi-ext/` — the binding boundary; the only crates that produce
   C-ABI libs, and the only crates allowed `unsafe`. `ffi-util` holds the shared machinery (handle
   table, `catch_unwind` export wrapper, buffer/JSON helpers, `SecureStore` C-callback adapter).
@@ -433,14 +441,20 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
     - accept plain CA-verified links.
 4. Explicit import and share — a `hysteria2://` deep link or clipboard never auto-saves; adding
    always needs confirmation. Sharing is user-initiated only: no background clipboard writes; an
-   explicit Copy in the share view marks the clipboard item sensitive (Android
-   `ClipDescription.EXTRA_IS_SENSITIVE`), local-only (Apple `UIPasteboard` `.localOnly`), and
-   auto-expiring (`.expirationDate` ≈ 30 s). The share view reads the secret on demand
+   explicit Copy in the share view tags the clipboard item with each platform's free, set-once
+   privacy attributes — sensitive (Android `ClipDescription.EXTRA_IS_SENSITIVE`, API 33+, applied
+   best-effort behind a `Build.VERSION` check since `minSdk` is 28, §3), local-only (Apple
+   `UIPasteboard` `.localOnly`), and Apple's native one-shot expiry (`.expirationDate` ≈ 30 s). We
+   do not run an active clipboard-clearing timer (no native expiry on Android/Windows; a timer would
+   risk clobbering whatever the user copied next) — exposure is bounded by these OS attributes, not
+   by us mutating the clipboard later. The share view reads the secret on demand
    (`export_profile_uri`, §5) and never surfaces it in a state snapshot.
 5. No telemetry — zero analytics / third-party SDKs.
-6. Logging — release builds redact link, auth, and server address at the logger; the connect
-   error is mapped to a `conn-error` int in the extension, so the server address cannot leak across
-   the boundary.
+6. No logging in shipped builds — `ffi-app`/`ffi-ext` install no `tracing`/`log` subscriber, so
+   dependency log events (`quinn`/`rustls`/`tokio`/`h3`) reach no sink and there is nothing to leak;
+   the `conn-error` enum (§5), mapped to an int in the extension, is the only diagnostic channel, so
+   the server address cannot cross the boundary. Dev-only binaries and tests (`devproxy`,
+   conformance, the memory gate) keep `tracing` to stderr.
 7. Supply chain and licensing — pin every crate; enforce with `cargo-deny` (license plus RustSec
    advisories) and a NuGet license scan. Prefer reproducible builds.
 8. Protocol implementation is security-sensitive — conformance tests against the reference server,
@@ -454,9 +468,10 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
 
 ## 8. Release gates and open decisions
 
-- Crypto provider — pick the `rustls` provider (`ring` vs `aws-lc-rs`) by binary size and
-  build-friendliness on iOS/Android. [Decide at the iOS memory gate, step 3, where it is measured
-  against the cap.]
+- Crypto provider — committed to `aws-lc-rs` (rustls default, actively maintained, FIPS-capable);
+  `ring` is the named fallback. The iOS memory gate (step 3) no longer _chooses_ the provider but
+  _verifies_ `aws-lc-rs` fits the cap (§3.3), and is the only point where we would reverse to
+  `ring`. Build prereqs (C toolchain, CMake, NASM on Windows) are pinned in `mise.toml` (§3.8).
 - Apple Network-Extension entitlement — a paid account suffices to build/test (§3.6); enable the
   Network Extensions capability before the memory gate (step 3). Org enrollment is App-Store-only
   (publishing entity, below).
@@ -471,6 +486,9 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
   trees: the Rust crates (`cargo-about`/`cargo-deny`) and the .NET/NuGet tree, plus the Wintun
   notice.
 - Profile schema — version from day one for migration.
+- Runtime defaults (deferred) — the values for the "defaulted and hidden" policies (reconnect,
+  keepalive, autoconnect, on-demand match rules; §1) are deferred to step 6; the named defaults
+  land with the real macOS tunnel.
 
 ---
 
