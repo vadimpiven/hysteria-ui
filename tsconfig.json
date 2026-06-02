@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["**/scripts/*.ts"]
+}

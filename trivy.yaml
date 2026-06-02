@@ -1,0 +1,25 @@
+# Trivy configuration file for consistent local and CI scans
+# Documentation: https://aquasecurity.github.io/trivy/latest/docs/configuration/config-file/
+scan:
+  type: fs
+  skip-version-check: true
+  skip-dirs:
+    - ".cache"
+    - ".venv"
+    - "external"
+    - "node_modules"
+    - "target"
+  skip-files:
+    - ".env"
+scanners:
+  - vuln
+  - misconfig
+  - secret
+severity:
+  - UNKNOWN
+  - LOW
+  - MEDIUM
+  - HIGH
+  - CRITICAL
+exit-code: 1
+cache-dir: .cache/trivy

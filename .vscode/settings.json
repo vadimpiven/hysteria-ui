@@ -1,0 +1,59 @@
+{
+  "mise.configureExtensionsAutomatically": true,
+  "mise.configureExtensionsAutomaticallyIgnoreList": ["ms-python.python", "ms-vscode.js-debug"],
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "oxc.oxc-vscode",
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  },
+  "evenBetterToml.schema.associations": {
+    "mise*.toml": "/Users/vadimpiven/Documents/Piven.TECH/mise/schema/mise.json"
+  },
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml"
+  },
+  "[shellscript]": {
+    "editor.defaultFormatter": "foxundermoon.shell-format"
+  },
+  "[markdown]": {
+    "editor.codeActionsOnSave": {
+      "source.fixAll.markdownlint": "explicit"
+    }
+  },
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "files.readonlyInclude": {
+    "**/.cargo/registry/src/**/*.rs": true,
+    "**/.cargo/git/checkouts/**/*.rs": true,
+    "**/lib/rustlib/src/rust/library/**/*.rs": true
+  },
+  "files.associations": {
+    ".env*": "properties"
+  },
+  "files.exclude": {
+    "**/.cache": true
+  },
+  "search.exclude": {
+    "**/.cache": true
+  },
+  "rust-analyzer.cargo.targetDir": true,
+  "rust-analyzer.runnables.extraTestBinaryArgs": ["--nocapture"],
+  "rust-analyzer.assist.emitMustUse": true,
+  "rust-analyzer.assist.preferSelf": true,
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--fix", "--allow-dirty"],
+  "rust-analyzer.diagnostics.styleLints.enable": true,
+  "rust-analyzer.imports.granularity.group": "item",
+  "rust-analyzer.imports.preferPrelude": true,
+  "rust-analyzer.imports.prefix": "plain",
+  "trivy.configFilePath": "trivy.yaml",
+  "trivy.ignoreFilesInGitIgnore": true
+}

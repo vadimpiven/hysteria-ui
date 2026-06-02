@@ -246,8 +246,8 @@ This is where VPN clients usually break, so the contract is explicit.
   `ffi-app` → `model` (the sole app-side facade); `ffi-ext` → `{tunnel, store (read), conn-error,
 profile, ffi-util}`, never `config` or `model`. Profiles are
   validated app-side at save time, and the tunnel consumes a minimal validated blob — a
-  `profile::Profile` serialized as JSON, deserialized without linking the parser (which is why `profile` is its own
-  crate, apart from `config`). The .NET/Avalonia runtime lives only in the app process; the
+  `profile::Profile` serialized as JSON, deserialized without linking the parser (which is why `profile`
+  is its own crate, apart from `config`). The .NET/Avalonia runtime lives only in the app process; the
   privileged side is a native shim (Swift / service / daemon) plus the Rust `staticlib`, never
   .NET. The crate-dependency wall (§3.8) holds on every platform, even where (Android) it is one
   process.
@@ -337,14 +337,14 @@ ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extens
 - `model/` — the serialized Model (the Model of Model–View) and the sole app-side facade. Depends
   on `config`, `store`, `conn-error`, `profile`, never `tunnel`/`hysteria` (connect is driven
   through the OS, §4).
-    - State: `Vec<store::Entry>`, `selected_id`, OS-derived `ConnectionState` (owned here),
+  - State: `Vec<store::Entry>`, `selected_id`, OS-derived `ConnectionState` (owned here),
       `last_error` (a `conn-error` value).
-    - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
-    - One on-demand query `export_profile_uri(id) -> Vec<u8>` for the share view: reads the link
+  - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
+  - One on-demand query `export_profile_uri(id) -> Vec<u8>` for the share view: reads the link
       from `SecureStore` only when the user opens share, returns it as bytes, and never places the
       URI in any state snapshot (snapshots stay secret-free; §7).
-    - Two output channels, never merged: discrete state snapshots, and throttled stats.
-    - `last_error` maps to one actionable UI sentence, no diagnostics screen.
+  - Two output channels, never merged: discrete state snapshots, and throttled stats.
+  - `last_error` maps to one actionable UI sentence, no diagnostics screen.
 - `ffi-util/` plus `ffi-app/` plus `ffi-ext/` — the binding boundary; the only crates that produce
   C-ABI libs, and the only crates allowed `unsafe`. `ffi-util` holds the shared machinery (handle
   table, `catch_unwind` export wrapper, buffer/JSON helpers, `SecureStore` C-callback adapter).

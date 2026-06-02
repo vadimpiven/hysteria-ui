@@ -1,0 +1,64 @@
+name: "Build and test"
+on:
+  pull_request:
+    types: ["opened", "reopened", "synchronize"]
+    branches:
+      - "main"
+  push:
+    branches:
+      - "main"
+  schedule:
+    - cron: "32 4 * * *"
+  workflow_dispatch: {}
+permissions: {}
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  zizmor:
+    name: "Check CI scripts"
+    timeout-minutes: 15
+    permissions:
+      contents: "read" # to fetch code
+      security-events: "write" # to upload sarif results
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd" # v6.0.2
+        with:
+          ref: "${{ github.ref }}"
+          fetch-depth: 1
+          persist-credentials: false
+      - name: "Run zizmor"
+        uses: "zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d" # v0.5.6
+        with:
+          persona: "auditor"
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+  trivy:
+    name: "Security scan"
+    timeout-minutes: 15
+    permissions:
+      contents: "read" # to fetch code
+      security-events: "write" # to upload sarif results
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd" # v6.0.2
+        with:
+          ref: "${{ github.ref }}"
+          fetch-depth: 1
+          persist-credentials: false
+      - name: "Run Trivy vulnerability scanner"
+        uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" # v0.36.0
+        with:
+          trivy-config: "trivy.yaml"
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+          ignore-unfixed: true
+      - name: "Upload Trivy scan results to GitHub Security tab"
+        uses: "github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa" # v4.36.0
+        with:
+          sarif_file: "trivy-results.sarif"

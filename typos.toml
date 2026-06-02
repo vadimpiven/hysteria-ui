@@ -1,0 +1,3 @@
+[files]
+# `external/` holds pinned git submodules.
+extend-exclude = ["*.lock", "pnpm-lock.yaml", "external/"]
