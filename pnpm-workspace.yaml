@@ -12,6 +12,7 @@ catalog:
   markdownlint-cli2: 0.22.1
   oxfmt: 0.51.0
   oxlint: 1.66.0
+  selfsigned: 5.5.0
   typescript: 6.0.3
 
 minimumReleaseAge: 1440
