@@ -89,7 +89,13 @@ function parseServerConfig(argv: string[]): ServerConfig {
   return JSON.parse(json) as ServerConfig;
 }
 
-/** Reserve a free UDP port by binding the ephemeral range, then releasing it. */
+/**
+ * Reserve a free UDP port by binding the ephemeral range, then releasing it.
+ * There is an unavoidable TOCTOU window between releasing the port here and
+ * `hysteria server` binding it (a UDP socket can't be handed to a child, and
+ * the server doesn't report its own port back), so the caller picks the port as
+ * late as possible — right before spawning — to keep that window minimal.
+ */
 async function pickFreePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const socket = createSocket("udp4");
@@ -275,8 +281,10 @@ async function runServer({
 
 runScript("Hysteria server", async () => {
   const provided = parseServerConfig(process.argv.slice(2));
-  const port = await pickFreePort();
+  // Generate the cert first (the slow step); pick the port last to keep the
+  // window between releasing it and the server binding it as small as possible.
   const { cert, key } = await generateCertificate();
+  const port = await pickFreePort();
 
   const { config, configPath, cleanup } = await writeServerFiles({
     provided,
