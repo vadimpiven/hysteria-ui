@@ -27,14 +27,25 @@ pub(crate) struct TcpStream {
     shared: SharedRef,
     handle: SocketHandle,
     notify: Arc<Notify>,
+    /// Liveness token: the netstack task holds a `Weak` to it and only removes
+    /// the socket once this stream drops, keeping `handle` valid for every access
+    /// here. smoltcp's `SocketSet` panics on a removed handle and recycles slots,
+    /// which would otherwise cross-wire two flows.
+    _alive: Arc<()>,
 }
 
 impl TcpStream {
-    pub(crate) fn new(shared: SharedRef, handle: SocketHandle, notify: Arc<Notify>) -> Self {
+    pub(crate) fn new(
+        shared: SharedRef,
+        handle: SocketHandle,
+        notify: Arc<Notify>,
+        alive: Arc<()>,
+    ) -> Self {
         Self {
             shared,
             handle,
             notify,
+            _alive: alive,
         }
     }
 }
@@ -45,6 +56,10 @@ impl AsyncRead for TcpStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        // A zero-capacity read isn't EOF; the caller just asked for nothing.
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
         let mut shared = lock(&self.shared);
         let socket = shared.sockets.get_mut::<tcp::Socket<'_>>(self.handle);
         if socket.can_recv() {

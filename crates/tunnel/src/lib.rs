@@ -4,8 +4,8 @@
 //! netstack accepts each TCP flow to an arbitrary destination, and the relay
 //! splices it to [`Client::tcp`], mirroring the Go TUN handler's per-flow copy.
 //! Production loads it behind the FFI extension over the OS-provided fd; the
-//! `tun-bridge` dev binary drives it over a macOS utun. UDP relay is the next
-//! increment.
+//! `tun-bridge` dev binary drives it over a macOS utun. UDP relay and IPv6 are
+//! the next increment (this one handles IPv4 TCP).
 
 mod device;
 mod stack;

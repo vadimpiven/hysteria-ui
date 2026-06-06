@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::sync::Weak;
 use std::time::Duration;
 
 use smoltcp::iface::Config as IfaceConfig;
@@ -21,13 +22,13 @@ use smoltcp::iface::Interface;
 use smoltcp::iface::SocketHandle;
 use smoltcp::iface::SocketSet;
 use smoltcp::socket::tcp;
+use smoltcp::time::Duration as SmolDuration;
 use smoltcp::time::Instant;
 use smoltcp::wire::HardwareAddress;
 use smoltcp::wire::IpCidr;
 use smoltcp::wire::IpListenEndpoint;
 use smoltcp::wire::IpProtocol;
 use smoltcp::wire::Ipv4Packet;
-use smoltcp::wire::Ipv6Packet;
 use smoltcp::wire::TcpPacket;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
@@ -36,17 +37,32 @@ use tun_rs::AsyncDevice;
 use crate::device::TunDevice;
 use crate::tcp::TcpStream;
 
-/// Per-socket buffer sizes. Bounded for the iOS `NetworkExtension` memory cap;
-/// the iOS memory gate tunes these against real RSS.
+/// Per-socket buffer sizes, and the concurrent-flow cap. All bounded for the iOS
+/// `NetworkExtension` memory cap; the iOS memory gate tunes them against real RSS
+/// (`MAX_FLOWS` × (`TCP_RX_BUFFER` + `TCP_TX_BUFFER`) is the smoltcp ceiling).
 const TCP_RX_BUFFER: usize = 16 * 1024;
 const TCP_TX_BUFFER: usize = 16 * 1024;
+const MAX_FLOWS: usize = 512;
+/// Detect dead peers (keep-alive probes) and abort wholly-idle flows so their
+/// sockets reach `Closed` and are reaped rather than leaking.
+const TCP_KEEP_ALIVE: SmolDuration = SmolDuration::from_secs(15);
+const TCP_TIMEOUT: SmolDuration = SmolDuration::from_secs(300);
 /// Safety wakeup when smoltcp reports no pending timer.
 const IDLE_POLL: Duration = Duration::from_secs(1);
 
 /// A flow's 5-tuple: `(source, destination)`.
 type FlowKey = (SocketAddr, SocketAddr);
-/// Live TCP sockets keyed by their smoltcp handle, with the flow they serve.
-type Handles = HashMap<SocketHandle, FlowKey>;
+
+/// A live TCP flow tracked by the netstack task.
+struct Flow {
+    key: FlowKey,
+    /// `Weak` to the [`TcpStream`]'s liveness token; once it can't upgrade, the
+    /// stream has dropped and the socket is safe to remove.
+    alive: Weak<()>,
+}
+
+/// Live TCP sockets keyed by their smoltcp handle.
+type Handles = HashMap<SocketHandle, Flow>;
 
 /// Netstack interface settings supplied by the front-end (matching the TUN).
 #[derive(Debug, Clone, Copy)]
@@ -136,7 +152,7 @@ async fn run(
             detect_and_accept(s, &mut handles, &notify, &shared, &flow_tx);
             let now = Instant::now();
             s.iface.poll(now, &mut s.device, &mut s.sockets);
-            reap_closed(s, &mut handles);
+            reap_finished(s, &mut handles);
             s.iface.poll_delay(now, &s.sockets)
         };
 
@@ -153,7 +169,13 @@ async fn run(
             }
         }
 
-        let timeout = poll_delay.map_or(IDLE_POLL, |d| Duration::from_micros(d.total_micros()));
+        // smoltcp's recommended loop: a zero delay means "work is due now", so
+        // re-poll immediately rather than arming a `sleep(0)` that hot-loops.
+        let timeout = match poll_delay {
+            Some(delay) if delay.total_micros() == 0 => continue,
+            Some(delay) => Duration::from_micros(delay.total_micros()),
+            None => IDLE_POLL,
+        };
         tokio::select! {
             read = device.recv(&mut buf) => match read {
                 Ok(n) => lock(&shared).device.push_inbound(buf[..n].to_vec()),
@@ -177,14 +199,19 @@ fn detect_and_accept(
     let Some((src, dst)) = s.device.peek_inbound().and_then(parse_tcp_syn) else {
         return;
     };
-    if handles.values().any(|&(hs, hd)| hs == src && hd == dst) {
+    if handles.values().any(|f| f.key == (src, dst)) {
         return; // already tracking this flow (a SYN retransmit)
+    }
+    if handles.len() >= MAX_FLOWS {
+        return; // backlog full: leave the SYN unanswered, like a real listener
     }
 
     let mut socket = tcp::Socket::new(
         tcp::SocketBuffer::new(vec![0u8; TCP_RX_BUFFER]),
         tcp::SocketBuffer::new(vec![0u8; TCP_TX_BUFFER]),
     );
+    socket.set_keep_alive(Some(TCP_KEEP_ALIVE));
+    socket.set_timeout(Some(TCP_TIMEOUT));
     let endpoint = IpListenEndpoint {
         addr: Some(dst.ip().into()),
         port: dst.port(),
@@ -193,61 +220,62 @@ fn detect_and_accept(
         return;
     }
     let handle = s.sockets.add(socket);
-    handles.insert(handle, (src, dst));
 
-    let stream = TcpStream::new(Arc::clone(shared), handle, Arc::clone(notify));
-    // If the relay is gone, drop the flow; the socket is reaped when it closes.
-    let _ = flow_tx.try_send(TcpFlow { dst, stream });
+    let alive = Arc::new(());
+    let stream = TcpStream::new(
+        Arc::clone(shared),
+        handle,
+        Arc::clone(notify),
+        Arc::clone(&alive),
+    );
+    if flow_tx.try_send(TcpFlow { dst, stream }).is_err() {
+        // Relay gone or backlog full: don't leave an orphan socket.
+        s.sockets.remove(handle);
+        return;
+    }
+    handles.insert(
+        handle,
+        Flow {
+            key: (src, dst),
+            alive: Arc::downgrade(&alive),
+        },
+    );
 }
 
-/// Remove sockets that have fully closed so their buffers are freed.
-fn reap_closed(s: &mut Shared, handles: &mut Handles) {
-    let closed: Vec<SocketHandle> = handles
-        .keys()
-        .copied()
-        .filter(|&h| s.sockets.get::<tcp::Socket<'_>>(h).state() == tcp::State::Closed)
+/// Remove sockets whose relay stream has dropped, freeing their buffers. Safe
+/// only because a live stream keeps its liveness token, so we never remove a
+/// handle a `TcpStream` still references. The stream's `Drop` already queued a
+/// FIN via `close()`, which the preceding `poll` flushed.
+fn reap_finished(s: &mut Shared, handles: &mut Handles) {
+    let finished: Vec<SocketHandle> = handles
+        .iter()
+        .filter(|(_, flow)| flow.alive.upgrade().is_none())
+        .map(|(&handle, _)| handle)
         .collect();
-    for handle in closed {
+    for handle in finished {
         s.sockets.remove(handle);
         handles.remove(&handle);
     }
 }
 
-/// Parse an IP packet; return `(src, dst)` if it is a TCP SYN opening a new
-/// connection (SYN set, ACK clear). IPv6 extension headers are not handled.
+/// Parse an IPv4 packet; return `(src, dst)` if it is a TCP SYN opening a new
+/// connection (SYN set, ACK clear). IPv6 is ignored for now — it needs an
+/// interface address and route (the next increment, with UDP).
 fn parse_tcp_syn(packet: &[u8]) -> Option<(SocketAddr, SocketAddr)> {
-    let (src_ip, dst_ip, payload) = match packet.first()? >> 4 {
-        4 => {
-            let ip = Ipv4Packet::new_checked(packet).ok()?;
-            if ip.next_header() != IpProtocol::Tcp {
-                return None;
-            }
-            (
-                IpAddr::V4(ip.src_addr()),
-                IpAddr::V4(ip.dst_addr()),
-                ip.payload(),
-            )
-        },
-        6 => {
-            let ip = Ipv6Packet::new_checked(packet).ok()?;
-            if ip.next_header() != IpProtocol::Tcp {
-                return None;
-            }
-            (
-                IpAddr::V6(ip.src_addr()),
-                IpAddr::V6(ip.dst_addr()),
-                ip.payload(),
-            )
-        },
-        _ => return None,
-    };
-    let segment = TcpPacket::new_checked(payload).ok()?;
+    if packet.first()? >> 4 != 4 {
+        return None;
+    }
+    let ip = Ipv4Packet::new_checked(packet).ok()?;
+    if ip.next_header() != IpProtocol::Tcp {
+        return None;
+    }
+    let segment = TcpPacket::new_checked(ip.payload()).ok()?;
     if !segment.syn() || segment.ack() {
         return None;
     }
     Some((
-        SocketAddr::new(src_ip, segment.src_port()),
-        SocketAddr::new(dst_ip, segment.dst_port()),
+        SocketAddr::new(IpAddr::V4(ip.src_addr()), segment.src_port()),
+        SocketAddr::new(IpAddr::V4(ip.dst_addr()), segment.dst_port()),
     ))
 }
 
