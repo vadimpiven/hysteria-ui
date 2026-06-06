@@ -83,6 +83,17 @@ linux-arm64 = { asset_pattern = "sccache-v*-aarch64-unknown-linux-musl.tar.gz", 
 macos-x64 = { asset_pattern = "sccache-v*-x86_64-apple-darwin.tar.gz", bin = "sccache" }
 macos-arm64 = { asset_pattern = "sccache-v*-aarch64-apple-darwin.tar.gz", bin = "sccache" }
 
+[tools."github:apernet/hysteria"]
+version_prefix = "app/v"
+version = "2.9.2"
+[tools."github:apernet/hysteria".platforms]
+windows-x64 = { asset_pattern = "hysteria-windows-amd64.exe", bin = "hysteria.exe" }
+windows-arm64 = { asset_pattern = "hysteria-windows-arm64.exe", bin = "hysteria.exe" }
+linux-x64 = { asset_pattern = "hysteria-linux-amd64", bin = "hysteria" }
+linux-arm64 = { asset_pattern = "hysteria-linux-arm64", bin = "hysteria" }
+macos-x64 = { asset_pattern = "hysteria-darwin-amd64", bin = "hysteria" }
+macos-arm64 = { asset_pattern = "hysteria-darwin-arm64", bin = "hysteria" }
+
 # ============================================================================
 # SETUP TASKS - Initialize environment and tools
 # ============================================================================
@@ -474,3 +485,63 @@ depends = ["upgrade:pnpm", "upgrade:cargo", "upgrade:uv"]
 # ============================================================================
 # BUILD & TEST TASKS - Build and test the project
 # ============================================================================
+
+# --- CI Build tasks ---
+[tasks."ci-build:hysteria"]
+description = "Build hysteria crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/hysteria --if-present run ci-build'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-build"]
+description = "Build all crates for CI"
+hide = true
+depends = ["ci-build:hysteria"]
+
+# --- CI Test tasks ---
+[tasks."ci-test:hysteria"]
+description = "Run CI tests for hysteria crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/hysteria --if-present run ci-test'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test"]
+description = "Run all CI tests"
+hide = true
+depends = ["ci-test:hysteria"]
+
+# --- Build tasks ---
+[tasks."build:hysteria"]
+description = "Build hysteria crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/hysteria --if-present run build'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks.build]
+description = "Compile all crates"
+alias = "b"
+depends = ["build:hysteria"]
+
+# --- Test tasks ---
+[tasks."test:hysteria"]
+description = "Run tests for hysteria crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/hysteria --if-present run test'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks.test]
+description = "Run all tests"
+alias = "t"
+depends = ["test:hysteria"]
+
+# ============================================================================
+# ASSISTANCE TASKS
+# ============================================================================
+
+[tasks."hysteria-server"]
+description = "Run the reference Hysteria 2 server for conformance tests"
+run = "node scripts/hysteria-server.ts"

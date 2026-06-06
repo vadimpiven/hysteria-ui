@@ -15,6 +15,7 @@
     "markdownlint-cli2": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
+    "selfsigned": "catalog:",
     "typescript": "catalog:"
   },
   "engines": {

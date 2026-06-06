@@ -9,3 +9,8 @@ workspace = true
 [dependencies]
 
 [dev-dependencies]
+anyhow.workspace = true
+pretty_assertions.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true

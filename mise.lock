@@ -438,6 +438,99 @@ checksum = "sha256:9b9da6e8168cb26d719c0bd4adab57c73fa6741dc5be38dde615e4c2b347d
 url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.7/cargo-deny-0.19.7-x86_64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/426881552"
 
+[tools."github:EmbarkStudios/cargo-deny"."platforms.windows-x64"]
+checksum = "sha256:1540d9e8d98229733a43ae041ec3b71bd700d7e139183118095284b3fe62ca8b"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.7/cargo-deny-0.19.7-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/426883382"
+
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
+
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-darwin-arm64"
+version_prefix = "app/v"
+
+[tools."github:apernet/hysteria"."platforms.macos-arm64"]
+checksum = "sha256:a08b087f4a7544d07e6dd94280bc1baa23f6ab67d314e4578aa717209917b3eb"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-darwin-arm64"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641769"
+
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
+
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-linux-arm64"
+version_prefix = "app/v"
+
+[tools."github:apernet/hysteria"."platforms.linux-arm64"]
+checksum = "sha256:9ec8f49f4ea554b1cac04e6f3690cea76ff835082e943e54196d7f323fcfba71"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-arm64"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641765"
+
+[tools."github:apernet/hysteria"."platforms.linux-arm64-musl"]
+checksum = "sha256:9ec8f49f4ea554b1cac04e6f3690cea76ff835082e943e54196d7f323fcfba71"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-arm64"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641765"
+
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
+
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-windows-arm64.exe"
+version_prefix = "app/v"
+
+[tools."github:apernet/hysteria"."platforms.windows-arm64"]
+checksum = "sha256:668d8d36650df0bd0c26b606ed6cf45e9dfb22e63b276e72e3d33fc345c9635d"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-windows-arm64.exe"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641752"
+
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
+
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-darwin-amd64"
+version_prefix = "app/v"
+
+[tools."github:apernet/hysteria"."platforms.macos-x64"]
+checksum = "sha256:226363d1ad1f44c978f4ee052e45196589fc6eefa21c9646b3c27ef89122d172"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-darwin-amd64"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641773"
+
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
+
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-linux-amd64"
+version_prefix = "app/v"
+
+[tools."github:apernet/hysteria"."platforms.linux-x64"]
+checksum = "sha256:86fef8e2f1b2bf41318ac96724eee6c3b449e4e510022cc89658b63a6713922a"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-amd64"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641763"
+
+[tools."github:apernet/hysteria"."platforms.linux-x64-musl"]
+checksum = "sha256:86fef8e2f1b2bf41318ac96724eee6c3b449e4e510022cc89658b63a6713922a"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-amd64"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641763"
+
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
+
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-windows-amd64.exe"
+version_prefix = "app/v"
+
+[tools."github:apernet/hysteria"."platforms.windows-x64"]
+checksum = "sha256:103c7258384d0ebbf0d19ca4bec50d6cb9b0b7be33f5b76f004fed0a8805ff9f"
+url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-windows-amd64.exe"
+url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641751"
+
 [[tools."github:mikefarah/yq"]]
 version = "4.53.2"
 backend = "github:mikefarah/yq"
@@ -470,6 +563,7 @@ provenance = "github-attestations"
 checksum = "sha256:f135c0c60edd5ded11bc418d12711c259795b17501112e843e93e7a3959a3d41"
 url = "https://github.com/mikefarah/yq/releases/download/v4.53.2/yq_darwin_arm64.tar.gz"
 url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/398368451"
+provenance = "github-attestations"
 
 [tools."github:mikefarah/yq"."platforms.macos-x64"]
 checksum = "sha256:48bc2dbb33f456efaf639e1e573b8e5a654701c2e92ef231e691c3971d5d4a5e"
@@ -494,17 +588,12 @@ version = "0.12.0"
 backend = "github:mozilla/sccache"
 
 [tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-aarch64-unknown-linux-musl.tar.gz"
+asset_pattern = "sccache-v*-aarch64-apple-darwin.tar.gz"
 
-[tools."github:mozilla/sccache"."platforms.linux-arm64"]
-checksum = "sha256:111ddd28fb108cb3e17edb69ab62cefe1dcc97b02e5006ff9c1330f4f2e78368"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639973"
-
-[tools."github:mozilla/sccache"."platforms.linux-arm64-musl"]
-checksum = "sha256:111ddd28fb108cb3e17edb69ab62cefe1dcc97b02e5006ff9c1330f4f2e78368"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639973"
+[tools."github:mozilla/sccache"."platforms.macos-arm64"]
+checksum = "sha256:4d5281f8760963347b29b9ca4ab1dbde99712c17329619fc9cecba1577ccc8d2"
+url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639966"
 
 [[tools."github:mozilla/sccache"]]
 version = "0.12.0"
@@ -528,12 +617,17 @@ version = "0.12.0"
 backend = "github:mozilla/sccache"
 
 [tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-aarch64-apple-darwin.tar.gz"
+asset_pattern = "sccache-v*-aarch64-unknown-linux-musl.tar.gz"
 
-[tools."github:mozilla/sccache"."platforms.macos-arm64"]
-checksum = "sha256:4d5281f8760963347b29b9ca4ab1dbde99712c17329619fc9cecba1577ccc8d2"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639966"
+[tools."github:mozilla/sccache"."platforms.linux-arm64"]
+checksum = "sha256:111ddd28fb108cb3e17edb69ab62cefe1dcc97b02e5006ff9c1330f4f2e78368"
+url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639973"
+
+[tools."github:mozilla/sccache"."platforms.linux-arm64-musl"]
+checksum = "sha256:111ddd28fb108cb3e17edb69ab62cefe1dcc97b02e5006ff9c1330f4f2e78368"
+url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639973"
 
 [[tools."github:mozilla/sccache"]]
 version = "0.12.0"
@@ -705,6 +799,7 @@ provenance = "github-attestations"
 checksum = "sha256:3efee732ed7e9a653e20d96c930e0ec799901289cce90f46bb20f627e2c0d2e9"
 url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.8.7/cargo-llvm-cov-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/418861557"
+provenance = "github-attestations"
 
 [tools."github:taiki-e/cargo-llvm-cov"."platforms.macos-x64"]
 checksum = "sha256:288ce0cb976207a9a1ad5af4d7ec9a06c9af116727066fb2287df8d9d1026be9"
