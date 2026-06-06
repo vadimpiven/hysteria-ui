@@ -1,5 +1,5 @@
 name: "Setup Environment"
-description: "Platform-aware setup - uses Docker on Linux, native on others"
+description: "Native development environment setup across Linux, macOS, and Windows"
 inputs:
   env:
     description: "Environment variables in JSON format"
@@ -39,17 +39,6 @@ runs:
       with:
         file_path: ".env"
         file_text: "${{ steps.env-content.outputs.text }}"
-    - name: "Setup (Docker)"
-      if: "runner.os == 'Linux'"
-      uses: "./.github/actions/setup-docker"
-      with:
-        cache-key: "${{ inputs.cache-key }}"
-        docker-image: "${{ inputs.docker-image }}"
-        docker-cache: "${{ inputs.docker-cache }}"
-        github-token: "${{ inputs.github-token }}"
-        docker-service: "${{ inputs.docker-service }}"
-        dockerhub-username: "${{ inputs.dockerhub-username }}"
-        dockerhub-token: "${{ inputs.dockerhub-token }}"
     - name: "Update apt index"
       if: "runner.os == 'Linux'"
       shell: "bash"
@@ -66,6 +55,4 @@ runs:
     - name: "Mise setup"
       uses: "./.github/actions/shell"
       with:
-        docker-service: "${{ inputs.docker-service }}"
-        gh-token: "${{ inputs.github-token }}"
         run: "mise setup"

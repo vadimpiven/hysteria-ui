@@ -500,7 +500,7 @@ hide = true
 depends = ["ci-build:hysteria"]
 
 # --- CI Test tasks ---
-[tasks."ci-test:core"]
+[tasks."ci-test:hysteria"]
 description = "Run CI tests for hysteria crate"
 hide = true
 depends = ["check"]
@@ -513,7 +513,7 @@ hide = true
 depends = ["ci-test:hysteria"]
 
 # --- Build tasks ---
-[tasks."build:core"]
+[tasks."build:hysteria"]
 description = "Build hysteria crate"
 hide = true
 depends = ["setup:rust", "setup:pnpm"]
