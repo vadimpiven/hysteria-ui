@@ -50,6 +50,10 @@ impl HopUdpSocket {
         addrs: Vec<SocketAddr>,
         interval: HopIntervalConfig,
     ) -> Self {
+        debug_assert!(
+            !addrs.is_empty(),
+            "HopUdpSocket requires at least one address"
+        );
         let start = rand::rng().random_range(0..addrs.len());
         let state = Arc::new(HopState {
             addrs,

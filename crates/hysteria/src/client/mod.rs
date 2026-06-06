@@ -2,9 +2,10 @@
 //! relay, the UDP session manager, and authentication over the Quinn transport.
 
 pub mod config;
-pub mod hop_socket;
-pub mod obfs_socket;
-pub mod tls;
+// Pure internals (socket wrappers + TLS pinning); not part of the public API.
+mod hop_socket;
+mod obfs_socket;
+mod tls;
 pub mod transport;
 pub mod udp;
 

@@ -101,6 +101,11 @@ impl Client {
     /// Dial the server, authenticate, and return the client plus handshake info.
     pub async fn connect(mut config: Config) -> Result<(Self, HandshakeInfo)> {
         config.verify_and_fill()?;
+        // Normalise IPv4-mapped IPv6 (e.g. `::ffff:1.2.3.4`) to plain IPv4 so the
+        // bind socket family and the dial target agree on dual-stack-disabled hosts.
+        config
+            .server_addr
+            .set_ip(config.server_addr.ip().to_canonical());
 
         let client_config = build_quic_client_config(&config)?;
         let bind: SocketAddr = if config.server_addr.is_ipv4() {

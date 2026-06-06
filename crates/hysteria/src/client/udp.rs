@@ -157,6 +157,15 @@ impl<I: UdpIo> UdpConn<I> {
     }
 }
 
+impl<I: UdpIo> Drop for UdpConn<I> {
+    /// Remove the session from the manager's table when the consumer drops the
+    /// conn, so a caller that never calls [`close`](Self::close) doesn't leak a
+    /// map entry (RAII; Go relies on an explicit `Close`). Idempotent.
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 /// A random non-zero packet ID for a fragmented message
 /// (`uint16(rand.Intn(0xFFFF)) + 1`).
 fn random_packet_id() -> u16 {
