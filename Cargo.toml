@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/conn-error", "crates/devproxy", "crates/hysteria"]
+members = [
+    "crates/config",
+    "crates/conn-error",
+    "crates/devproxy",
+    "crates/hysteria",
+    "crates/profile",
+]
 resolver = "3"
 
 [workspace.package]
@@ -83,9 +89,12 @@ clap = { version = "4.5.51", features = ["derive"] }
 # devproxy SOCKS5 server, incl. UDP datagram framing (new_udp_header /
 # parse_udp_request). MIT-licensed.
 fast-socks5 = "1.0.0"
+# hysteria2:// link parsing (config crate): percent-encoding + query (de)serde.
+form_urlencoded = "1.2.2"
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
 http = "1.4.1"
+percent-encoding = "2.3.2"
 pretty_assertions = "1.4.1"
 # QUIC transport. aws-lc-rs is the committed crypto provider (PLAN §8); we drive
 # our own cert pinning, so `platform-verifier` is left off.

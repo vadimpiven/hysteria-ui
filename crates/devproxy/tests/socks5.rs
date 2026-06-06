@@ -110,20 +110,19 @@ fn push_v4(buf: &mut Vec<u8>, addr: SocketAddr) -> Result<()> {
 /// (kept alive; killed on drop).
 async fn spawn_devproxy_binary(server: &HysteriaServer) -> Result<(SocketAddr, Child)> {
     let cfg = server.config();
+    // Drive the binary through its public surface: a `hysteria2://` link.
+    let mut url = format!(
+        "hysteria2://{auth}@{server}/?sni={sni}&pinSHA256={pin}",
+        auth = cfg.auth,
+        server = cfg.server,
+        sni = cfg.sni,
+        pin = cfg.pin_sha256,
+    );
+    if cfg.insecure {
+        url.push_str("&insecure=1");
+    }
     let mut child = Command::new(env!("CARGO_BIN_EXE_devproxy"))
-        .args([
-            "--socks5",
-            "127.0.0.1:0",
-            "--server",
-            &cfg.server,
-            "--auth",
-            &cfg.auth,
-            "--sni",
-            &cfg.sni,
-            "--pin",
-            &cfg.pin_sha256,
-            "--insecure",
-        ])
+        .args(["--socks5", "127.0.0.1:0", "--url", &url])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true)

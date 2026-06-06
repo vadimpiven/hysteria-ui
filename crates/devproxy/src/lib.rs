@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use anyhow::Result;
+use anyhow::anyhow;
 use anyhow::bail;
 use clap::Parser;
 use fast_socks5::ReplyError;
@@ -27,7 +28,6 @@ use fast_socks5::server::Socks5ServerProtocol;
 use fast_socks5::server::states::CommandRead;
 use hysteria::client::Client;
 use hysteria::client::config::Config;
-use hysteria::client::config::TlsConfig;
 use tokio::io::AsyncReadExt as _;
 use tokio::io::copy_bidirectional;
 use tokio::net::TcpListener;
@@ -41,45 +41,26 @@ pub struct Cli {
     /// Address to listen on for SOCKS5 clients.
     #[arg(long, value_name = "ADDR")]
     pub socks5: SocketAddr,
-    /// Hysteria 2 server address (`host:port`).
-    #[arg(long, value_name = "ADDR")]
-    pub server: SocketAddr,
-    /// Authentication password.
-    #[arg(long)]
-    pub auth: String,
-    /// TLS server name (SNI).
-    #[arg(long)]
-    pub sni: String,
-    /// Server certificate pin, colon-hex SHA-256 (the `pinSHA256` link param).
-    #[arg(long, value_name = "HEX", value_parser = parse_pin)]
-    pub pin: Option<[u8; 32]>,
-    /// Skip CA verification (requires `--pin`).
-    #[arg(long)]
-    pub insecure: bool,
-    /// Salamander obfuscation password.
-    #[arg(long)]
-    pub obfs: Option<String>,
+    /// Hysteria 2 connection link (`hysteria2://auth@host:port/?params`).
+    #[arg(long, value_name = "URL")]
+    pub url: String,
 }
 
 impl Cli {
-    /// Split into the SOCKS5 listen address and the hysteria client config.
-    #[must_use]
-    pub fn into_parts(self) -> (SocketAddr, Config) {
-        let tls = TlsConfig {
-            server_name: self.sni,
-            insecure: self.insecure,
-            pin_sha256: self.pin,
-            ca: None,
-        };
-        let mut config = Config::new(self.server, self.auth, tls);
-        config.obfs = self.obfs.map(String::into_bytes);
-        (self.socks5, config)
+    /// Split into the SOCKS5 listen address and the hysteria client config,
+    /// parsing the `hysteria2://` link into a `profile::Profile` (via the
+    /// `config` crate) and building the client config from it.
+    pub fn into_parts(self) -> Result<(SocketAddr, Config)> {
+        let profile = config::parse_uri(&self.url)
+            .ok_or_else(|| anyhow!("not a hysteria2:// link: {}", self.url))?;
+        let config = Config::from_profile(&profile).context("build client config from link")?;
+        Ok((self.socks5, config))
     }
 }
 
 /// Connect to the server, then serve SOCKS5 until the listener errors.
 pub async fn run(cli: Cli) -> Result<()> {
-    let (listen, config) = cli.into_parts();
+    let (listen, config) = cli.into_parts()?;
     let server = config.server_addr;
     let (client, info) = Client::connect(config).await.context("connect to server")?;
     eprintln!(
@@ -92,18 +73,6 @@ pub async fn run(cli: Cli) -> Result<()> {
         .context("bind SOCKS5 listener")?;
     eprintln!("SOCKS5 listening on {}", listener.local_addr()?);
     serve(listener, Arc::new(client)).await
-}
-
-/// Parse a colon-hex SHA-256 (`AB:CD:...`) into 32 bytes (clap value parser).
-fn parse_pin(s: &str) -> Result<[u8; 32], String> {
-    let bytes = s
-        .split(':')
-        .map(|h| u8::from_str_radix(h, 16))
-        .collect::<Result<Vec<u8>, _>>()
-        .map_err(|e| e.to_string())?;
-    bytes
-        .try_into()
-        .map_err(|_| "pin must be 32 bytes".to_string())
 }
 
 /// Serve SOCKS5 over `listener`, tunnelling every connection through `client`,
@@ -229,36 +198,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_pin_accepts_colon_hex() -> Result<()> {
-        let hex = (0..32u8)
-            .map(|b| format!("{b:02x}"))
-            .collect::<Vec<_>>()
-            .join(":");
-        let pin = parse_pin(&hex).map_err(|e| anyhow::anyhow!(e))?;
-        let expected: [u8; 32] = core::array::from_fn(|i| u8::try_from(i).unwrap_or(0));
-        assert_eq!(pin, expected, "32 hex bytes parse in order");
-        assert!(parse_pin("zz").is_err(), "non-hex rejected");
-        assert!(parse_pin("01:02").is_err(), "wrong length rejected");
-        Ok(())
-    }
-
-    #[test]
-    fn cli_into_parts_builds_config() -> Result<()> {
+    fn cli_into_parts_parses_link() -> Result<()> {
         let cli = Cli::try_parse_from([
             "devproxy",
             "--socks5",
             "127.0.0.1:1080",
-            "--server",
-            "10.0.0.1:443",
-            "--auth",
-            "secret",
-            "--sni",
-            "example.com",
-            "--insecure",
-            "--obfs",
-            "pw",
+            "--url",
+            "hysteria2://secret@10.0.0.1:443/?obfs=salamander&obfs-password=pw&sni=example.com&insecure=1",
         ])?;
-        let (listen, config) = cli.into_parts();
+        let (listen, config) = cli.into_parts()?;
         assert_eq!(listen, "127.0.0.1:1080".parse()?, "listen address");
         assert_eq!(
             config.server_addr,
@@ -269,6 +217,19 @@ mod tests {
         assert_eq!(config.tls.server_name, "example.com", "sni");
         assert!(config.tls.insecure, "insecure flag");
         assert_eq!(config.obfs, Some(b"pw".to_vec()), "obfs psk");
+        Ok(())
+    }
+
+    #[test]
+    fn cli_into_parts_rejects_non_link() -> Result<()> {
+        let cli = Cli::try_parse_from([
+            "devproxy",
+            "--socks5",
+            "127.0.0.1:1080",
+            "--url",
+            "https://example.com/",
+        ])?;
+        assert!(cli.into_parts().is_err(), "non-hysteria2 URL rejected");
         Ok(())
     }
 }

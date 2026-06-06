@@ -9,6 +9,7 @@
 //! a separate `CongestionConfig` — Reno is not supported.
 
 use std::net::SocketAddr;
+use std::net::ToSocketAddrs as _;
 use std::time::Duration;
 
 use crate::errors::ConfigError;
@@ -111,6 +112,127 @@ impl Config {
 
         Ok(())
     }
+
+    /// Build a client config from a parsed [`profile::Profile`] (PLAN: `hysteria`
+    /// owns the `&Profile -> client config` builder). Resolves the server
+    /// address — a trailing port range/list (e.g. `host:7000-8000,9000`) turns on
+    /// port hopping — normalizes and decodes the cert pin, and maps Salamander
+    /// obfuscation. SNI defaults to the server host when the link omits it.
+    ///
+    /// Resolving a hostname performs a blocking DNS lookup; an IP literal does
+    /// not. Call it at setup, not on a hot path.
+    pub fn from_profile(p: &profile::Profile) -> Result<Self, ConfigError> {
+        let (host, port_spec) = split_host_port(&p.server);
+        let hop_ports = if port_spec.contains(['-', ',']) {
+            Some(parse_port_union(port_spec).ok_or_else(|| ConfigError {
+                field: "server".into(),
+                reason: "invalid port range".into(),
+            })?)
+        } else {
+            None
+        };
+        let port = primary_port(port_spec)?;
+        let ip = (host, port)
+            .to_socket_addrs()
+            .map_err(|e| ConfigError {
+                field: "server".into(),
+                reason: format!("resolve {host}: {e}"),
+            })?
+            .next()
+            .ok_or_else(|| ConfigError {
+                field: "server".into(),
+                reason: format!("no address for {host}"),
+            })?;
+
+        let pin_sha256 = match &p.tls.pin_sha256 {
+            Some(pin) => Some(parse_pin(pin)?),
+            None => None,
+        };
+        let obfs = match &p.obfs {
+            None => None,
+            Some(o) if o.obfs_type.eq_ignore_ascii_case("salamander") => {
+                Some(o.password.clone().into_bytes())
+            },
+            Some(o) => {
+                return Err(ConfigError {
+                    field: "obfs".into(),
+                    reason: format!("unsupported obfs type: {}", o.obfs_type),
+                });
+            },
+        };
+        let server_name = if p.tls.sni.is_empty() {
+            host.to_string()
+        } else {
+            p.tls.sni.clone()
+        };
+
+        let mut config = Config::new(
+            ip,
+            p.auth.clone(),
+            TlsConfig {
+                server_name,
+                insecure: p.tls.insecure,
+                pin_sha256,
+                ca: None,
+            },
+        );
+        config.obfs = obfs;
+        config.hop_ports = hop_ports;
+        config.fast_open = p.fast_open;
+        Ok(config)
+    }
+}
+
+/// Split `host[:port-spec]` into `(host, port-spec)`, defaulting the port to
+/// `443`. Handles `[ipv6]:port`; a bare (unbracketed) IPv6 literal is not
+/// supported (use brackets, as a URI requires).
+fn split_host_port(server: &str) -> (&str, &str) {
+    if let Some(rest) = server.strip_prefix('[')
+        && let Some((host, after)) = rest.split_once(']')
+    {
+        let spec = after.strip_prefix(':').unwrap_or("");
+        return (host, if spec.is_empty() { "443" } else { spec });
+    }
+    match server.rsplit_once(':') {
+        Some((host, spec)) if !host.is_empty() && !spec.is_empty() => (host, spec),
+        _ => (server, "443"),
+    }
+}
+
+/// The port to actually dial: the first port of the spec (the start of the
+/// first range/list entry). Port hopping rotates over the rest.
+fn primary_port(spec: &str) -> Result<u16, ConfigError> {
+    spec.split(['-', ','])
+        .next()
+        .unwrap_or(spec)
+        .parse()
+        .map_err(|_| ConfigError {
+            field: "server".into(),
+            reason: "invalid port".into(),
+        })
+}
+
+/// Normalize (lowercase, strip `:`/`-`) and decode a hex SHA-256 cert pin.
+fn parse_pin(pin: &str) -> Result<[u8; 32], ConfigError> {
+    let hex: String = pin
+        .chars()
+        .filter(|c| !matches!(c, ':' | '-'))
+        .collect::<String>()
+        .to_lowercase();
+    if hex.len() != 64 {
+        return Err(ConfigError {
+            field: "pinSHA256".into(),
+            reason: "must be a 64-character hex SHA-256".into(),
+        });
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| ConfigError {
+            field: "pinSHA256".into(),
+            reason: "invalid hex".into(),
+        })?;
+    }
+    Ok(out)
 }
 
 /// Port-hop interval range. Port of udphop's `HopIntervalConfig`.
@@ -316,6 +438,69 @@ mod tests {
         assert!(
             c.verify_and_fill().is_ok(),
             "interval ignored without hop_ports"
+        );
+    }
+
+    #[test]
+    fn from_profile_maps_connection_fields() -> anyhow::Result<()> {
+        let pin_hex = "ab".repeat(32); // 64 hex chars ⇒ [0xab; 32]
+        let p = profile::Profile {
+            server: "127.0.0.1:8443".into(),
+            auth: "secret".into(),
+            tls: profile::Tls {
+                sni: "example.com".into(),
+                insecure: true,
+                pin_sha256: Some(pin_hex),
+                ca: None,
+            },
+            obfs: Some(profile::Obfs {
+                obfs_type: "salamander".into(),
+                password: "pw".into(),
+            }),
+            fast_open: true,
+        };
+        let c = Config::from_profile(&p)?;
+        assert_eq!(c.server_addr, "127.0.0.1:8443".parse()?, "server addr");
+        assert_eq!(c.auth, "secret", "auth");
+        assert_eq!(c.tls.server_name, "example.com", "sni");
+        assert!(c.tls.insecure, "insecure");
+        assert_eq!(c.tls.pin_sha256, Some([0xab; 32]), "decoded pin");
+        assert_eq!(c.obfs, Some(b"pw".to_vec()), "obfs psk");
+        assert!(c.fast_open, "fast open");
+        assert!(c.hop_ports.is_none(), "single port ⇒ no hopping");
+        Ok(())
+    }
+
+    #[test]
+    fn from_profile_defaults_sni_and_enables_port_hopping() -> anyhow::Result<()> {
+        let p = profile::Profile {
+            server: "127.0.0.1:8000-8002".into(),
+            auth: "a".into(),
+            ..Default::default()
+        };
+        let c = Config::from_profile(&p)?;
+        assert_eq!(c.tls.server_name, "127.0.0.1", "sni defaults to host");
+        assert_eq!(c.server_addr.port(), 8000, "primary port = range start");
+        let Some(hop) = c.hop_ports else {
+            anyhow::bail!("port range should enable hopping");
+        };
+        assert!(hop.contains(8001), "range expands to its ports");
+        Ok(())
+    }
+
+    #[test]
+    fn from_profile_rejects_unsupported_obfs() {
+        let p = profile::Profile {
+            server: "127.0.0.1:443".into(),
+            obfs: Some(profile::Obfs {
+                obfs_type: "gecko".into(),
+                password: "x".into(),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            Config::from_profile(&p).is_err(),
+            "gecko obfs is not supported",
         );
     }
 

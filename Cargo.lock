@@ -207,6 +207,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "config"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "form_urlencoded",
+ "percent-encoding",
+ "pretty_assertions",
+ "profile",
+]
+
+[[package]]
 name = "conn-error"
 version = "0.0.0"
 dependencies = [
@@ -254,6 +265,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "config",
  "fast-socks5",
  "hysteria",
  "pretty_assertions",
@@ -332,6 +344,15 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "form_urlencoded"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+dependencies = [
+ "percent-encoding",
+]
 
 [[package]]
 name = "fs_extra"
@@ -519,6 +540,7 @@ dependencies = [
  "h3-quinn",
  "http",
  "pretty_assertions",
+ "profile",
  "quinn",
  "quinn-proto",
  "rand",
@@ -618,6 +640,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "percent-encoding"
+version = "2.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -649,6 +677,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "profile"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
