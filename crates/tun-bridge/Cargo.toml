@@ -1,0 +1,20 @@
+[package]
+name = "tun-bridge"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+config = { path = "../config" }
+hysteria = { path = "../hysteria" }
+tokio.workspace = true
+tun-rs.workspace = true
+tunnel = { path = "../tunnel" }
+
+[dev-dependencies]
+pretty_assertions.workspace = true

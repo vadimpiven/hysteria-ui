@@ -5,6 +5,8 @@ members = [
     "crates/hysteria",
     "crates/profile",
     "crates/socks5-bridge",
+    "crates/tun-bridge",
+    "crates/tunnel",
 ]
 resolver = "3"
 
@@ -112,6 +114,18 @@ rustls-pki-types = "1.14.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha2 = "0.10.9"
+# Userspace TCP/IP netstack for the TUN front-end (tunnel crate). default
+# features off to keep only IP + TCP/UDP (no ethernet/6lowpan), for the iOS cap.
+smoltcp = { version = "0.13.1", default-features = false, features = [
+    "std",
+    "async",
+    "medium-ip",
+    "proto-ipv4",
+    "proto-ipv6",
+    "socket-tcp",
+    "socket-udp",
+] }
+# Cross-platform TUN device (macOS utun, OS-provided fd) for tun-bridge/tunnel.
 tokio = { version = "1.52.3", features = [
     "io-util",
     "macros",
@@ -121,6 +135,7 @@ tokio = { version = "1.52.3", features = [
     "sync",
     "time",
 ] }
+tun-rs = { version = "2.8.3", features = ["async"] }
 # socks5-bridge e2e test: a real SOCKS5 client + TLS to reach the internet.
 rustls-native-certs = "0.8.2"
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }

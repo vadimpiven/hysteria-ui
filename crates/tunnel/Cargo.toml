@@ -1,0 +1,21 @@
+[package]
+name = "tunnel"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+hysteria = { path = "../hysteria" }
+# Userspace TCP/IP netstack over the TUN fd.
+smoltcp.workspace = true
+# Background netstack task + per-flow channels.
+tokio.workspace = true
+# TUN device (the OS-provided fd in production; a utun in the dev harness).
+tun-rs.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+pretty_assertions.workspace = true

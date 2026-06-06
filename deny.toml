@@ -85,9 +85,10 @@ feature-depth = 1
 # output a note when they are encountered.
 ignore = [
     #"RUSTSEC-0000-0000",
-    #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
-    #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
-    #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
+    # paste is unmaintained but functional; pulled transitively by smoltcp. No
+    # behavior change and no drop-in replacement needed; revisit if smoltcp moves
+    # off it.
+    { id = "RUSTSEC-2024-0436", reason = "paste unmaintained, transitive via smoltcp, functional" },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -105,8 +106,10 @@ ignore = [
 allow = [
     "MIT",
     "Apache-2.0",
-    # rustls / aws-lc-rs / rustls-webpki / untrusted (PLAN §3.7).
+    # rustls / aws-lc-rs / rustls-webpki / untrusted.
     "ISC",
+    # smoltcp (the userspace netstack).
+    "0BSD",
     #"Apache-2.0 WITH LLVM-exception",
 ]
 # The confidence threshold for detecting a license from license text.
@@ -124,10 +127,14 @@ exceptions = [
     # thiserror, by quinn-proto). Permissive Unicode data license; scoped here
     # rather than allowed globally.
     { allow = ["Unicode-3.0"], crate = "unicode-ident" },
-    # Crypto stack: BSD-3-Clause is permissive; scoped to the two crates that
-    # carry it rather than allowed globally.
+    # Crypto stack: BSD-3-Clause is permissive; scoped to the crates that carry
+    # it rather than allowed globally.
     { allow = ["BSD-3-Clause"], crate = "subtle" },
     { allow = ["BSD-3-Clause"], crate = "aws-lc-sys" },
+    # TUN stack (tun-rs): c2rust packet bitfields + encoding_rs carry BSD-3-Clause.
+    { allow = ["BSD-3-Clause"], crate = "c2rust-bitfields" },
+    { allow = ["BSD-3-Clause"], crate = "c2rust-bitfields-derive" },
+    { allow = ["BSD-3-Clause"], crate = "encoding_rs" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
