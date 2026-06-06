@@ -513,9 +513,15 @@ impl UdpIo for QuinnUdpIo {
         };
         match self.conn.send_datagram(Bytes::copy_from_slice(&buf[..n])) {
             Ok(()) => Ok(()),
-            Err(quinn::SendDatagramError::TooLarge) => Err(SendError::TooLarge {
-                max_payload_size: self.conn.max_datagram_size().unwrap_or(0),
-            }),
+            // TooLarge implies datagrams are enabled, so max_datagram_size is
+            // Some; guard the impossible None rather than silently dropping
+            // (a 0 max would make frag_udp_message produce no fragments).
+            Err(quinn::SendDatagramError::TooLarge) => match self.conn.max_datagram_size() {
+                Some(max_payload_size) => Err(SendError::TooLarge { max_payload_size }),
+                None => Err(SendError::Io(io::Error::other(
+                    "datagram too large but max datagram size is unknown",
+                ))),
+            },
             Err(e) => Err(SendError::Io(io::Error::other(e))),
         }
     }

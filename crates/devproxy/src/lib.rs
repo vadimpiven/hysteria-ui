@@ -60,7 +60,11 @@ impl Cli {
 
 /// Connect to the server, then serve SOCKS5 until the listener errors.
 pub async fn run(cli: Cli) -> Result<()> {
-    let (listen, config) = cli.into_parts()?;
+    // into_parts resolves the server address (a blocking DNS lookup for a
+    // hostname), so keep it off the async executor thread.
+    let (listen, config) = tokio::task::spawn_blocking(move || cli.into_parts())
+        .await
+        .context("join DNS resolution")??;
     let server = config.server_addr;
     let (client, info) = Client::connect(config).await.context("connect to server")?;
     eprintln!(
