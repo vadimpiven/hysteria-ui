@@ -1,0 +1,27 @@
+[package]
+name = "socks5-bridge"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+config = { path = "../config" }
+fast-socks5.workspace = true
+hysteria = { path = "../hysteria" }
+tokio.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+# e2e test: SOCKS5 client + TLS to fetch https://example.com through the proxy.
+rustls.workspace = true
+rustls-native-certs.workspace = true
+rustls-pki-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio-rustls.workspace = true
+tokio-socks.workspace = true

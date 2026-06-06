@@ -487,6 +487,27 @@ depends = ["upgrade:pnpm", "upgrade:cargo", "upgrade:uv"]
 # ============================================================================
 
 # --- CI Build tasks ---
+[tasks."ci-build:config"]
+description = "Build config crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/config --if-present run ci-build'
+sources = ["crates/config/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-build:conn-error"]
+description = "Build conn-error crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/conn-error --if-present run ci-build'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-build:socks5-bridge"]
+description = "Build socks5-bridge crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/socks5-bridge --if-present run ci-build'
+sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-build:hysteria"]
 description = "Build hysteria crate for CI"
 hide = true
@@ -494,12 +515,46 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/hysteria --if-present run ci-build'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 
+[tasks."ci-build:profile"]
+description = "Build profile crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/profile --if-present run ci-build'
+sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-build"]
 description = "Build all crates for CI"
 hide = true
-depends = ["ci-build:hysteria"]
+depends = [
+    "ci-build:config",
+    "ci-build:conn-error",
+    "ci-build:socks5-bridge",
+    "ci-build:hysteria",
+    "ci-build:profile",
+]
 
 # --- CI Test tasks ---
+[tasks."ci-test:config"]
+description = "Run CI tests for config crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/config --if-present run ci-test'
+sources = ["crates/config/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test:conn-error"]
+description = "Run CI tests for conn-error crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/conn-error --if-present run ci-test'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test:socks5-bridge"]
+description = "Run CI tests for socks5-bridge crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/socks5-bridge --if-present run ci-test'
+sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-test:hysteria"]
 description = "Run CI tests for hysteria crate"
 hide = true
@@ -507,12 +562,46 @@ depends = ["check"]
 run = 'pnpm -C crates/hysteria --if-present run ci-test'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 
+[tasks."ci-test:profile"]
+description = "Run CI tests for profile crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/profile --if-present run ci-test'
+sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-test"]
 description = "Run all CI tests"
 hide = true
-depends = ["ci-test:hysteria"]
+depends = [
+    "ci-test:config",
+    "ci-test:conn-error",
+    "ci-test:socks5-bridge",
+    "ci-test:hysteria",
+    "ci-test:profile",
+]
 
 # --- Build tasks ---
+[tasks."build:config"]
+description = "Build config crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/config --if-present run build'
+sources = ["crates/config/**/*", "Cargo.{toml,lock}"]
+
+[tasks."build:conn-error"]
+description = "Build conn-error crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/conn-error --if-present run build'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."build:socks5-bridge"]
+description = "Build socks5-bridge crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/socks5-bridge --if-present run build'
+sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks."build:hysteria"]
 description = "Build hysteria crate"
 hide = true
@@ -520,12 +609,46 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/hysteria --if-present run build'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 
+[tasks."build:profile"]
+description = "Build profile crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/profile --if-present run build'
+sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
+
 [tasks.build]
 description = "Compile all crates"
 alias = "b"
-depends = ["build:hysteria"]
+depends = [
+    "build:config",
+    "build:conn-error",
+    "build:socks5-bridge",
+    "build:hysteria",
+    "build:profile",
+]
 
 # --- Test tasks ---
+[tasks."test:config"]
+description = "Run tests for config crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/config --if-present run test'
+sources = ["crates/config/**/*", "Cargo.{toml,lock}"]
+
+[tasks."test:conn-error"]
+description = "Run tests for conn-error crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/conn-error --if-present run test'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."test:socks5-bridge"]
+description = "Run tests for socks5-bridge crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/socks5-bridge --if-present run test'
+sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks."test:hysteria"]
 description = "Run tests for hysteria crate"
 hide = true
@@ -533,10 +656,23 @@ depends = ["fix"]
 run = 'pnpm -C crates/hysteria --if-present run test'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 
+[tasks."test:profile"]
+description = "Run tests for profile crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/profile --if-present run test'
+sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
+
 [tasks.test]
 description = "Run all tests"
 alias = "t"
-depends = ["test:hysteria"]
+depends = [
+    "test:config",
+    "test:conn-error",
+    "test:socks5-bridge",
+    "test:hysteria",
+    "test:profile",
+]
 
 # ============================================================================
 # ASSISTANCE TASKS

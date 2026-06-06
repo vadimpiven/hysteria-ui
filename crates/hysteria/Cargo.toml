@@ -7,10 +7,33 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+anyhow.workspace = true
+# BLAKE2b-256 for Salamander obfuscation.
+blake2.workspace = true
+bytes.workspace = true
+# HTTP/3 auth handshake over the QUIC connection.
+h3.workspace = true
+h3-quinn.workspace = true
+http.workspace = true
+# Parsed connection profile; the `Config::from_profile` builder maps it to the
+# client config (PLAN: hysteria owns the `&Profile -> client config` builder).
+profile = { path = "../profile" }
+# QUIC transport + Brutal congestion control (`quinn_proto::congestion`).
+quinn.workspace = true
+quinn-proto.workspace = true
+# Non-cryptographic randomness for framing padding and UDP packet IDs.
+rand.workspace = true
+# TLS client config + custom cert-pinning verifier.
+rustls.workspace = true
+rustls-pki-types.workspace = true
+# SHA-256 for the `pinSHA256` cert pin (provider-independent).
+sha2.workspace = true
+# Session manager: `sync` (mpsc/Mutex) and `rt` (background task), from the
+# workspace feature set.
+tokio.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
 pretty_assertions.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true

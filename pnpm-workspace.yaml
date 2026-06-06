@@ -1,5 +1,9 @@
 packages:
+  - crates/config
+  - crates/conn-error
   - crates/hysteria
+  - crates/profile
+  - crates/socks5-bridge
 
 allowBuilds: {}
 

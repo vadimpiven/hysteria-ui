@@ -1,0 +1,15 @@
+[package]
+name = "profile"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+pretty_assertions.workspace = true
+serde_json.workspace = true

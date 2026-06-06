@@ -22,14 +22,28 @@
 # this list would mean the nix crate, as well as any of its exclusive
 # dependencies not shared by any other crates, would be ignored, as the target
 # list here is effectively saying which targets you are building for.
+# The platforms we build/ship (PLAN §3.8), plus the Linux/macOS CI hosts. This
+# scopes the checks to crates that actually compile for us — notably it prunes
+# wasm-only transitive deps (e.g. quinn-proto pulls `ring` only on
+# wasm32-unknown-unknown), which we never target.
 targets = [
-    # The triple can be any string, but only the target triples built in to
-    # rustc (as of 1.40) can be checked against actual config expressions
-    #"x86_64-unknown-linux-musl",
-    # You can also specify which target_features you promise are enabled for a
-    # particular target. target_features are currently not validated against
-    # the actual valid features supported by the target architecture.
-    #{ triple = "wasm32-unknown-unknown", features = ["atomics"] },
+    # CI / dev hosts (also the Android/Apple cross-compile hosts)
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    # macOS
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    # iOS / iPadOS (device + simulator)
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "x86_64-apple-ios",
+    # Android / Android TV
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+    "x86_64-linux-android",
+    # Windows
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
 ]
 # When creating the dependency graph used as the source of truth when checks are
 # executed, this field can be used to prune crates from the graph, removing them
@@ -91,6 +105,8 @@ ignore = [
 allow = [
     "MIT",
     "Apache-2.0",
+    # rustls / aws-lc-rs / rustls-webpki / untrusted (PLAN §3.7).
+    "ISC",
     #"Apache-2.0 WITH LLVM-exception",
 ]
 # The confidence threshold for detecting a license from license text.
@@ -104,6 +120,14 @@ exceptions = [
     # Each entry is the crate and version constraint, and its specific allow
     # list
     #{ allow = ["Zlib"], crate = "adler32" },
+    # The proc-macro toolchain's leaf (pulled by serde_derive and, via
+    # thiserror, by quinn-proto). Permissive Unicode data license; scoped here
+    # rather than allowed globally.
+    { allow = ["Unicode-3.0"], crate = "unicode-ident" },
+    # Crypto stack: BSD-3-Clause is permissive; scoped to the two crates that
+    # carry it rather than allowed globally.
+    { allow = ["BSD-3-Clause"], crate = "subtle" },
+    { allow = ["BSD-3-Clause"], crate = "aws-lc-sys" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
@@ -201,9 +225,14 @@ deny = [
 #exact = true
 
 # Certain crates/versions that will be skipped when doing duplicate detection.
+# Unavoidable transitive version skew we can't influence upstream; revisit when
+# the upstreams catch up. All are confined to socks5-bridge (not linked into the
+# shipped ffi-* libs) or are Windows-only (we ship Windows last, PLAN §6).
 skip = [
-    #"ansi_term@0.11.0",
-    #{ crate = "ansi_term@0.11.0", reason = "you can specify a reason why it can't be updated/removed" },
+    { crate = "socket2@0.5", reason = "fast-socks5 (socks5-bridge) pins socket2 0.5; quinn/tokio use 0.6" },
+    { crate = "thiserror@1", reason = "fast-socks5 + tokio-socks (socks5-bridge) pin thiserror 1.x; quinn uses 2.x" },
+    { crate = "thiserror-impl@1", reason = "transitive proc-macro for thiserror 1.x (socks5-bridge)" },
+    { crate = "windows-sys@0.52", reason = "quinn-udp pins windows-sys 0.52; the rest of the tree is on 0.61 (Windows-only)" },
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive

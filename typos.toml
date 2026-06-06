@@ -1,3 +1,8 @@
 [files]
 # `external/` holds pinned git submodules.
 extend-exclude = ["*.lock", "pnpm-lock.yaml", "external/"]
+
+[default.extend-words]
+# "hel" is a deliberate UDP fragment of "hello" in frag.rs's split test (the
+# Go frag_test.go splits "hello" into "hel"+"lo"); not a misspelling.
+hel = "hel"
