@@ -90,6 +90,12 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
+        // A zero-length write isn't a stall; the `AsyncWrite` contract is to
+        // report it written immediately (`send_slice(&[])` returns `Ok(0)`,
+        // which the readiness logic below would misread as a full buffer).
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
         let mut shared = lock(&self.shared);
         let socket = shared.sockets.get_mut::<tcp::Socket<'_>>(self.handle);
         if !socket.may_send() {

@@ -206,6 +206,15 @@ fn detect_and_accept(
         return; // backlog full: leave the SYN unanswered, like a real listener
     }
 
+    // Reserve a channel slot *before* creating the socket/stream. If the relay
+    // backlog is full (or the receiver is gone), we leave the SYN unanswered —
+    // like a real listener — without ever constructing, then tearing down, a
+    // socket. Tearing one down here would drop the `TcpStream` while we hold the
+    // `Shared` lock, and its `Drop` re-locks the same non-reentrant mutex.
+    let Ok(permit) = flow_tx.try_reserve() else {
+        return;
+    };
+
     let mut socket = tcp::Socket::new(
         tcp::SocketBuffer::new(vec![0u8; TCP_RX_BUFFER]),
         tcp::SocketBuffer::new(vec![0u8; TCP_TX_BUFFER]),
@@ -228,11 +237,7 @@ fn detect_and_accept(
         Arc::clone(notify),
         Arc::clone(&alive),
     );
-    if flow_tx.try_send(TcpFlow { dst, stream }).is_err() {
-        // Relay gone or backlog full: don't leave an orphan socket.
-        s.sockets.remove(handle);
-        return;
-    }
+    permit.send(TcpFlow { dst, stream });
     handles.insert(
         handle,
         Flow {
