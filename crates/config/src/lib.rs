@@ -58,20 +58,21 @@ pub fn parse_uri(s: &str) -> Option<Profile> {
     };
     if let Some(query) = query {
         let params = parse_query(query);
+        // The reference reads `q.Get(...) != ""`, so an empty value is "absent".
         // obfs-password is only meaningful alongside an obfs type, as in Go.
-        if let Some(obfs_type) = params.get("obfs") {
+        if let Some(obfs_type) = params.get("obfs").filter(|s| !s.is_empty()) {
             profile.obfs = Some(Obfs {
                 obfs_type: obfs_type.clone(),
                 password: params.get("obfs-password").cloned().unwrap_or_default(),
             });
         }
-        if let Some(sni) = params.get("sni") {
+        if let Some(sni) = params.get("sni").filter(|s| !s.is_empty()) {
             profile.tls.sni.clone_from(sni);
         }
         if let Some(insecure) = params.get("insecure").and_then(|s| parse_bool(s)) {
             profile.tls.insecure = insecure;
         }
-        if let Some(pin) = params.get("pinSHA256") {
+        if let Some(pin) = params.get("pinSHA256").filter(|s| !s.is_empty()) {
             profile.tls.pin_sha256 = Some(pin.clone());
         }
     }
@@ -257,6 +258,19 @@ mod tests {
         let b = parse_uri("HYSTERIA2://god@zilla.jp/").ok_or_else(|| anyhow!("upper rejected"))?;
         assert_eq!(a.server, "zilla.jp", "hy2 alias parses host");
         assert_eq!(b.auth, "god", "uppercase scheme parses auth");
+        Ok(())
+    }
+
+    #[test]
+    fn empty_query_values_are_treated_as_absent() -> Result<()> {
+        // The reference uses `q.Get(...) != ""`; an empty `pinSHA256=` must not
+        // become Some("") (which would later fail the 64-hex-char check).
+        let p = parse_uri("hysteria2://host:443/?obfs=&obfs-password=x&sni=&pinSHA256=&insecure=")
+            .ok_or_else(|| anyhow!("None"))?;
+        assert!(p.obfs.is_none(), "empty obfs ignored");
+        assert!(p.tls.pin_sha256.is_none(), "empty pin ignored");
+        assert_eq!(p.tls.sni, "", "empty sni ignored");
+        assert!(!p.tls.insecure, "empty insecure ignored");
         Ok(())
     }
 

@@ -184,8 +184,8 @@ impl Config {
 }
 
 /// Split `host[:port-spec]` into `(host, port-spec)`, defaulting the port to
-/// `443`. Handles `[ipv6]:port`; a bare (unbracketed) IPv6 literal is not
-/// supported (use brackets, as a URI requires).
+/// `443` (port of Go's `parseServerAddrString`). Handles `[ipv6]:port`; a bare
+/// (unbracketed) IPv6 literal has no port and resolves with the default.
 fn split_host_port(server: &str) -> (&str, &str) {
     if let Some(rest) = server.strip_prefix('[')
         && let Some((host, after)) = rest.split_once(']')
@@ -194,7 +194,11 @@ fn split_host_port(server: &str) -> (&str, &str) {
         return (host, if spec.is_empty() { "443" } else { spec });
     }
     match server.rsplit_once(':') {
-        Some((host, spec)) if !host.is_empty() && !spec.is_empty() => (host, spec),
+        // A colon left in the host half means a bare (unbracketed) IPv6 literal;
+        // Go's net.SplitHostPort errors on it and falls back to the default port.
+        Some((host, spec)) if !host.is_empty() && !spec.is_empty() && !host.contains(':') => {
+            (host, spec)
+        },
         _ => (server, "443"),
     }
 }
@@ -485,6 +489,32 @@ mod tests {
             anyhow::bail!("port range should enable hopping");
         };
         assert!(hop.contains(8001), "range expands to its ports");
+        Ok(())
+    }
+
+    #[test]
+    fn from_profile_handles_ipv6_hosts() -> anyhow::Result<()> {
+        // Bracketed host:port.
+        let c = Config::from_profile(&profile::Profile {
+            server: "[::1]:8443".into(),
+            ..Default::default()
+        })?;
+        assert_eq!(
+            c.server_addr,
+            "[::1]:8443".parse()?,
+            "bracketed IPv6 host:port"
+        );
+        assert_eq!(c.tls.server_name, "::1", "sni defaults to IPv6 host");
+        // A bare IPv6 literal must not be mis-split on its colons (default port).
+        let c = Config::from_profile(&profile::Profile {
+            server: "::1".into(),
+            ..Default::default()
+        })?;
+        assert_eq!(
+            c.server_addr,
+            "[::1]:443".parse()?,
+            "bare IPv6 ⇒ default port"
+        );
         Ok(())
     }
 
