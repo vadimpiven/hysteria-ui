@@ -302,7 +302,9 @@ fn fill_window(value: &mut u64, default: u64, field: &str) -> Result<(), ConfigE
 pub struct TlsConfig {
     /// TLS server name (SNI).
     pub server_name: String,
-    /// Skip CA verification. Only honored together with a `pin_sha256`.
+    /// Skip CA verification. Must be combined with `pin_sha256`: an `insecure`
+    /// config without a pin is rejected at connect time (not silently ignored),
+    /// per the cert-pinning policy (PLAN §7.3).
     pub insecure: bool,
     /// SHA-256 of the server's end-entity certificate (the `pinSHA256` param).
     pub pin_sha256: Option<[u8; 32]>,

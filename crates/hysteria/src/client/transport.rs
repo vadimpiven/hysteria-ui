@@ -213,6 +213,16 @@ impl Client {
     }
 }
 
+impl Drop for Client {
+    /// Close on drop (RAII). The HTTP/3 driver task holds a clone of the
+    /// connection and loops until it closes, so without this a `Client` dropped
+    /// without an explicit [`close`](Self::close) would leak the task and the
+    /// connection. Idempotent — closing an already-closed connection is a no-op.
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 /// Internal result of the auth handshake.
 struct AuthOutcome {
     udp_enabled: bool,
