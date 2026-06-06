@@ -1,0 +1,47 @@
+name: "Init Workflow"
+description: "Defines central configurations and constants for workflows"
+outputs:
+  matrix:
+    description: "Matrix for regular runs"
+    value: |
+      {
+        "os": [
+          "ubuntu-24.04",
+          "ubuntu-24.04-arm",
+          "macos-15-intel",
+          "macos-15",
+          "windows-2025",
+          "windows-11-arm"
+        ]
+      }
+  cache-key:
+    description: "Cache key prefix for manual invalidation"
+    value: "v1"
+  env:
+    description: "Environment variables"
+    value: |
+      {
+        "CI": "true",
+        "MISE_QUIET": "false",
+        "MISE_LOCKED": "true",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_NET_GIT_FETCH_WITH_CLI": "true",
+        "RUST_BACKTRACE": "1"
+      }
+  test-coverage:
+    description: "Globs for coverage reports"
+    value: "crates/**/lcov.info"
+  test-reports:
+    description: "Globs for test reports"
+    value: "crates/**/report-*.junit.xml"
+  mise-version:
+    description: "Mise version"
+    value: "${{ steps.parse.outputs.mise-version }}"
+runs:
+  using: "composite"
+  steps:
+    - name: "Parse versions from mise.toml"
+      id: "parse"
+      shell: "bash"
+      run: |
+        echo "mise-version=$(cat .mise-version)" >> "$GITHUB_OUTPUT"

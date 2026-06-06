@@ -15,6 +15,61 @@ concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: true
 jobs:
+  init:
+    name: "Init"
+    runs-on: "ubuntu-latest"
+    permissions: {} # No permissions needed
+    outputs:
+      matrix: "${{ steps.init-workflow.outputs.matrix }}"
+      env: "${{ steps.init-workflow.outputs.env }}"
+      cache-key: "${{ steps.init-workflow.outputs.cache-key }}"
+      test-coverage: "${{ steps.init-workflow.outputs.test-coverage }}"
+      test-reports: "${{ steps.init-workflow.outputs.test-reports }}"
+      mise-version: "${{ steps.init-workflow.outputs.mise-version }}"
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd" # v6.0.2
+        with:
+          ref: "${{ github.ref }}"
+          fetch-depth: 1
+          persist-credentials: false
+      - name: "Init workflow constants"
+        id: "init-workflow"
+        uses: "./.github/actions/init-workflow"
+  build-and-test:
+    name: "Build and test"
+    timeout-minutes: 45
+    permissions:
+      contents: "read" # to fetch code
+    needs:
+      - "init"
+    strategy:
+      fail-fast: false
+      matrix: "${{ fromJSON(needs.init.outputs.matrix) }}"
+    runs-on: "${{ matrix.os }}"
+    steps:
+      - name: "Checkout"
+        uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd" # v6.0.2
+        with:
+          ref: "${{ github.ref }}"
+          fetch-depth: 1
+          persist-credentials: false
+      - name: "Setup development environment"
+        uses: "./.github/actions/setup"
+        with:
+          env: "${{ needs.init.outputs.env }}"
+          cache-key: "${{ needs.init.outputs.cache-key }}"
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+          mise-version: "${{ needs.init.outputs.mise-version }}"
+      - name: "Build and test"
+        uses: "./.github/actions/shell"
+        with:
+          run: "mise run --force ci-test"
+      - name: "Upload reports"
+        uses: "./.github/actions/upload-reports"
+        with:
+          test-coverage: "${{ needs.init.outputs.test-coverage }}"
+          test-reports: "${{ needs.init.outputs.test-reports }}"
   zizmor:
     name: "Check CI scripts"
     timeout-minutes: 15

@@ -1,0 +1,71 @@
+name: "Setup Environment"
+description: "Platform-aware setup - uses Docker on Linux, native on others"
+inputs:
+  env:
+    description: "Environment variables in JSON format"
+    required: true
+  cache-key:
+    description: "Cache key prefix"
+    required: true
+  github-token:
+    description: "GitHub token for authenticated API requests"
+    required: true
+  mise-version:
+    description: "Mise version to use"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: "Restore shared caches"
+      uses: "actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae" # v5.0.5
+      with:
+        path: ".cache"
+        key: "${{ inputs.cache-key }}-${{ runner.os }}-${{ runner.arch }}"
+    - name: "Prepare .env content"
+      id: "env-content"
+      shell: "bash"
+      env:
+        GITHUB_TOKEN: "${{ inputs.github-token }}"
+        ENV: "${{ inputs.env }}"
+      run: |
+        {
+          echo "text<<EOF"
+          printf "GITHUB_TOKEN=%s\n" "$GITHUB_TOKEN"
+          printf "%s" "$ENV" | jq -er 'to_entries[] | "\(.key)=\(.value)"'
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
+    - name: "Setup .env file"
+      uses: "./.github/actions/setup-secret"
+      with:
+        file_path: ".env"
+        file_text: "${{ steps.env-content.outputs.text }}"
+    - name: "Setup (Docker)"
+      if: "runner.os == 'Linux'"
+      uses: "./.github/actions/setup-docker"
+      with:
+        cache-key: "${{ inputs.cache-key }}"
+        docker-image: "${{ inputs.docker-image }}"
+        docker-cache: "${{ inputs.docker-cache }}"
+        github-token: "${{ inputs.github-token }}"
+        docker-service: "${{ inputs.docker-service }}"
+        dockerhub-username: "${{ inputs.dockerhub-username }}"
+        dockerhub-token: "${{ inputs.dockerhub-token }}"
+    - name: "Update apt index"
+      if: "runner.os == 'Linux'"
+      shell: "bash"
+      run: "sudo apt-get update"
+    - name: "Setup MSVC developer command prompt"
+      if: "runner.os == 'Windows'"
+      uses: "ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756" # v1.13.0
+    - name: "Run mise install"
+      uses: "jdx/mise-action@1648a7812b9aeae629881980618f079932869151" # v4.0.1
+      with:
+        version: "${{ inputs.mise-version }}"
+        cache_key_prefix: "${{ inputs.cache-key }}-mise"
+        github_token: "${{ inputs.github-token }}"
+    - name: "Mise setup"
+      uses: "./.github/actions/shell"
+      with:
+        docker-service: "${{ inputs.docker-service }}"
+        gh-token: "${{ inputs.github-token }}"
+        run: "mise setup"
