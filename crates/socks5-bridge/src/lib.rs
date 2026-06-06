@@ -1,16 +1,19 @@
-//! Dev-only SOCKS5 front-end over the Hysteria 2 client (PLAN §5 `devproxy`).
+//! A standalone SOCKS5 front-end over the Hysteria 2 client (PLAN §5
+//! `socks5-bridge`).
 //!
 //! The SOCKS5 protocol (RFC 1928) — greeting, no-auth negotiation, request
 //! parsing, and UDP datagram framing — is delegated to `fast-socks5`. We only
 //! wire its commands to the [`hysteria::client::Client`]: `CONNECT` maps to
-//! [`Client::tcp`] and `UDP ASSOCIATE` to a [`Client::udp`] session. This is the
-//! local conformance loop for the protocol — never part of the shipped surface.
+//! [`Client::tcp`] and `UDP ASSOCIATE` to a [`Client::udp`] session. It is a
+//! self-contained binary (per-app/browser proxying without a system-wide TUN)
+//! that doubles as the SOCKS5 conformance harness; it is never linked into the
+//! `ffi-*` libraries (the app/ext wall, PLAN §3.8).
 //!
 //! `SocketAddr` is a `std::net` address *value type* that `tokio` reuses (it has
 //! no replacement); all I/O uses `tokio::net`.
 
-// Dev-only binary's status output to stderr is intentional.
-#![expect(clippy::print_stderr, reason = "dev-only binary status output")]
+// The binary prints listen/connection status to stderr.
+#![expect(clippy::print_stderr, reason = "CLI status output")]
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -34,7 +37,7 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::net::UdpSocket;
 
-/// `devproxy` command-line arguments.
+/// `socks5-bridge` command-line arguments.
 #[derive(Parser, Debug)]
 #[command(about = "Dev-only SOCKS5 proxy over the Hysteria 2 client")]
 pub struct Cli {
@@ -204,7 +207,7 @@ mod tests {
     #[test]
     fn cli_into_parts_parses_link() -> Result<()> {
         let cli = Cli::try_parse_from([
-            "devproxy",
+            "socks5-bridge",
             "--socks5",
             "127.0.0.1:1080",
             "--url",
@@ -227,7 +230,7 @@ mod tests {
     #[test]
     fn cli_into_parts_rejects_non_link() -> Result<()> {
         let cli = Cli::try_parse_from([
-            "devproxy",
+            "socks5-bridge",
             "--socks5",
             "127.0.0.1:1080",
             "--url",

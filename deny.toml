@@ -226,12 +226,12 @@ deny = [
 
 # Certain crates/versions that will be skipped when doing duplicate detection.
 # Unavoidable transitive version skew we can't influence upstream; revisit when
-# the upstreams catch up. All are confined to devproxy (dev-only, never shipped)
-# or are Windows-only (we ship Windows last, PLAN §6).
+# the upstreams catch up. All are confined to socks5-bridge (not linked into the
+# shipped ffi-* libs) or are Windows-only (we ship Windows last, PLAN §6).
 skip = [
-    { crate = "socket2@0.5", reason = "fast-socks5 (devproxy, dev-only) pins socket2 0.5; quinn/tokio use 0.6" },
-    { crate = "thiserror@1", reason = "fast-socks5 + tokio-socks (devproxy, dev-only) pin thiserror 1.x; quinn uses 2.x" },
-    { crate = "thiserror-impl@1", reason = "transitive proc-macro for thiserror 1.x (devproxy, dev-only)" },
+    { crate = "socket2@0.5", reason = "fast-socks5 (socks5-bridge) pins socket2 0.5; quinn/tokio use 0.6" },
+    { crate = "thiserror@1", reason = "fast-socks5 + tokio-socks (socks5-bridge) pin thiserror 1.x; quinn uses 2.x" },
+    { crate = "thiserror-impl@1", reason = "transitive proc-macro for thiserror 1.x (socks5-bridge)" },
     { crate = "windows-sys@0.52", reason = "quinn-udp pins windows-sys 0.52; the rest of the tree is on 0.61 (Windows-only)" },
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate

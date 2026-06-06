@@ -2,9 +2,9 @@
 members = [
     "crates/config",
     "crates/conn-error",
-    "crates/devproxy",
     "crates/hysteria",
     "crates/profile",
+    "crates/socks5-bridge",
 ]
 resolver = "3"
 
@@ -84,9 +84,9 @@ undocumented_unsafe_blocks = "deny"
 anyhow = "1.0.102"
 blake2 = "0.10.6"
 bytes = "1.11.1"
-# devproxy CLI.
+# socks5-bridge CLI.
 clap = { version = "4.5.51", features = ["derive"] }
-# devproxy SOCKS5 server, incl. UDP datagram framing (new_udp_header /
+# socks5-bridge SOCKS5 server, incl. UDP datagram framing (new_udp_header /
 # parse_udp_request). MIT-licensed.
 fast-socks5 = "1.0.0"
 # hysteria2:// link parsing (config crate): percent-encoding + query (de)serde.
@@ -121,7 +121,7 @@ tokio = { version = "1.52.3", features = [
     "sync",
     "time",
 ] }
-# Dev-only (devproxy e2e test): a real SOCKS5 client + TLS to reach the internet.
+# socks5-bridge e2e test: a real SOCKS5 client + TLS to reach the internet.
 rustls-native-certs = "0.8.2"
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }
 tokio-socks = "0.5.2"

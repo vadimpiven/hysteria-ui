@@ -1,7 +1,7 @@
-//! End-to-end conformance test for `devproxy --socks5`: a SOCKS5 client drives
-//! devproxy, which tunnels through the Hysteria 2 client to the reference server
+//! End-to-end conformance test for `socks5-bridge --socks5`: a SOCKS5 client drives
+//! socks5-bridge, which tunnels through the Hysteria 2 client to the reference server
 //! and out to a local target. Proves the full chain
-//! `SOCKS5 → devproxy → hysteria → server → target`.
+//! `SOCKS5 → socks5-bridge → hysteria → server → target`.
 
 mod common;
 
@@ -64,14 +64,14 @@ fn client_config(cfg: &common::HysteriaClientConfig) -> Result<Config> {
     ))
 }
 
-/// Boot the reference server and start devproxy's SOCKS5 front-end over it;
+/// Boot the reference server and start socks5-bridge's SOCKS5 front-end over it;
 /// returns the SOCKS5 listen address (and keeps the server alive via the return).
-async fn start_devproxy(server: &HysteriaServer) -> Result<SocketAddr> {
+async fn start_bridge(server: &HysteriaServer) -> Result<SocketAddr> {
     let (client, _info) = Client::connect(client_config(server.config())?).await?;
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     tokio::spawn(async move {
-        let _ = devproxy::serve(listener, Arc::new(client)).await;
+        let _ = socks5_bridge::serve(listener, Arc::new(client)).await;
     });
     Ok(addr)
 }
@@ -105,10 +105,10 @@ fn push_v4(buf: &mut Vec<u8>, addr: SocketAddr) -> Result<()> {
     Ok(())
 }
 
-/// Spawn the actual `devproxy` binary over the reference server and return its
+/// Spawn the actual `socks5-bridge` binary over the reference server and return its
 /// SOCKS5 listen address (parsed from its startup output) plus the child handle
 /// (kept alive; killed on drop).
-async fn spawn_devproxy_binary(server: &HysteriaServer) -> Result<(SocketAddr, Child)> {
+async fn spawn_bridge_binary(server: &HysteriaServer) -> Result<(SocketAddr, Child)> {
     let cfg = server.config();
     // Drive the binary through its public surface: a `hysteria2://` link.
     let mut url = format!(
@@ -121,21 +121,24 @@ async fn spawn_devproxy_binary(server: &HysteriaServer) -> Result<(SocketAddr, C
     if cfg.insecure {
         url.push_str("&insecure=1");
     }
-    let mut child = Command::new(env!("CARGO_BIN_EXE_devproxy"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_socks5-bridge"))
         .args(["--socks5", "127.0.0.1:0", "--url", &url])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .context("spawn devproxy binary")?;
+        .context("spawn socks5-bridge binary")?;
 
-    let stderr = child.stderr.take().context("devproxy stderr unavailable")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("socks5-bridge stderr unavailable")?;
     let mut lines = BufReader::new(stderr).lines();
     loop {
         let line = timeout(Duration::from_secs(15), lines.next_line())
             .await
-            .context("devproxy startup timed out")??
-            .context("devproxy exited before it started listening")?;
+            .context("socks5-bridge startup timed out")??
+            .context("socks5-bridge exited before it started listening")?;
         if let Some(addr) = line.strip_prefix("SOCKS5 listening on ") {
             return Ok((
                 addr.trim().parse().context("parse SOCKS5 listen addr")?,
@@ -160,7 +163,7 @@ async fn socks_greet(stream: &mut TcpStream) -> Result<()> {
 async fn socks5_connect_tunnels_tcp() -> Result<()> {
     let server = HysteriaServer::serve(HysteriaServerOptions::default()).await?;
     let echo_addr = spawn_tcp_echo().await?;
-    let socks_addr = start_devproxy(&server).await?;
+    let socks_addr = start_bridge(&server).await?;
 
     let mut stream = TcpStream::connect(socks_addr).await?;
     socks_greet(&mut stream).await?;
@@ -198,7 +201,7 @@ async fn socks5_udp_associate_tunnels_udp() -> Result<()> {
         }
     });
 
-    let socks_addr = start_devproxy(&server).await?;
+    let socks_addr = start_bridge(&server).await?;
 
     // Open the UDP association over a TCP control connection (kept alive).
     let mut ctrl = TcpStream::connect(socks_addr).await?;
@@ -241,15 +244,15 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// e2e: a real SOCKS5 client (`tokio-socks`) → our `devproxy` binary → reference
+/// e2e: a real SOCKS5 client (`tokio-socks`) → our `socks5-bridge` binary → reference
 /// hysteria server → the public internet, fetching `https://example.com` over
 /// TLS. Requires outbound network access.
 #[tokio::test]
 async fn socks5_client_opens_https_example_com() -> Result<()> {
     let server = HysteriaServer::serve(HysteriaServerOptions::default()).await?;
-    let (socks_addr, _devproxy) = spawn_devproxy_binary(&server).await?;
+    let (socks_addr, _bridge) = spawn_bridge_binary(&server).await?;
 
-    // Open a tunnel to example.com:443 through devproxy with a real SOCKS5 client.
+    // Open a tunnel to example.com:443 through socks5-bridge with a real SOCKS5 client.
     let tunnel = Socks5Stream::connect(socks_addr, ("example.com", 443u16))
         .await
         .context("SOCKS5 CONNECT to example.com:443")?;

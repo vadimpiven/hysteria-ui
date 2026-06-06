@@ -213,7 +213,7 @@ lipo, `csbindgen` generation into `bindings/`, packaging — lives in TypeScript
 run via Node; per-package steps go through pnpm scripts. A `mise run hysteria-server` task fetches
 the pinned reference server (rev `c3a806b`) under a checksum, generates the self-signed cert plus
 its `pinSHA256`, and runs it with known auth — first-class test infrastructure from the first
-commit, backing both the `devproxy` conformance loop (§5) and the cert-pinning path (§7.3).
+commit, backing both the `socks5-bridge` conformance loop (§5) and the cert-pinning path (§7.3).
 
 The dependency-wall and supply-chain gates (`cargo-deny`, the `cargo tree` wall assertion below,
 `[workspace.lints]`) are scaffolded in the first commit so the wall — a structural invariant —
@@ -282,7 +282,7 @@ hysteria-ui/
       ffi-util/            # handle table, catch_unwind export wrapper, buffer/JSON helpers, SecureStore C-callback adapter
       ffi-app/             # cdylib+staticlib (symbols hyapp_*): extern "C" + csbindgen; deps: model, ffi-util
       ffi-ext/             # cdylib+staticlib (symbols hyext_*): extern "C" + csbindgen; deps: tunnel, store, conn-error, profile, ffi-util
-      devproxy/            # DEV-ONLY bin: local test harness over the hysteria client; swappable front-ends --socks5 / --tun; deps: hysteria, tunnel, profile; never linked into any ffi-* lib
+      socks5-bridge/       # standalone SOCKS5 front-end over the hysteria client (also the protocol conformance harness); deps: hysteria, config; never linked into any ffi-* lib. The TUN front-end is a separate dev binary added with tunnel/ (step 2)
     fuzz/                  # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
     testdata/              # mise-managed: pinned reference Hysteria 2 server (rev c3a806b) + self-signed cert + computed pinSHA256 + known auth; the conformance fixture
   bindings/                # generated + committed: C header + C# P/Invoke (csbindgen output); core/ produces, ui/ consumes
@@ -315,21 +315,24 @@ hysteria-ui/
   protocol carries no live counters). Maps connect failures into the `conn-error` enum.
   Conformance-tested against the reference Hysteria 2 server (§6, §7). This library API is the
   front-end seam: `hysteria` never assumes who drives it. Front-ends are interchangeable consumers —
-  the TUN netstack (`tunnel/`) for the system-wide VPN, and the SOCKS5 listener (`devproxy`) for a
-  per-app/browser proxy. Keeping that seam clean leaves the door open to promoting SOCKS5 to a
-  shippable front-end later (e.g. a pure-Rust native-messaging host that a browser extension points
-  `chrome.proxy` at — bypassing the C ABI and .NET entirely); out of v1 scope, an invariant to
-  preserve.
+  the TUN netstack (`tunnel/`) for the system-wide VPN, and the SOCKS5 listener (`socks5-bridge`)
+  for a per-app/browser proxy. `socks5-bridge` is already a usable standalone front-end; keeping the
+  seam clean leaves the door open to shipping it more widely later (e.g. a pure-Rust
+  native-messaging host that a browser extension points `chrome.proxy` at — bypassing the C ABI and
+  .NET entirely); out of v1 scope, an invariant to preserve.
 - `tunnel/` — `smoltcp` netstack (§3.2) plus `tun-rs` fd, driving the `hysteria` client: feed
   tun-rs packets into smoltcp, route each accepted flow to `hysteria::tcp_connect` or a UDP
-  session, copy bytes both ways. Among shipped libs, ext-only (the dev `devproxy --tun` also drives
-  it). Counts traffic at the smoltcp↔hysteria seam for the stats snapshot.
-- `devproxy/` — a dev-only binary, the local test loop that validates the protocol before any
-  OS/TUN/FFI/UI exists. It drives the `hysteria` client off a hardcoded `profile::Profile` behind
-  swappable front-ends: `--socks5` (TCP `CONNECT` plus UDP `ASSOCIATE`, covering both the TCP relay
-  and the UDP/datagram relay) and `--tun` (the `tunnel` netstack over a root-opened utun on macOS).
-  Excluded from the shipped surface; never linked into any `ffi-*` lib. Tested against the
-  mise-managed local server (below); the same `--tun` build is what the iOS memory gate measures.
+  session, copy bytes both ways. Among shipped libs, ext-only (a separate dev TUN harness drives it
+  too). Counts traffic at the smoltcp↔hysteria seam for the stats snapshot.
+- `socks5-bridge/` — a standalone SOCKS5 front-end over the `hysteria` client (TCP `CONNECT` plus
+  UDP `ASSOCIATE`, covering both the TCP relay and the UDP/datagram relay), doubling as the
+  protocol's local conformance loop. It takes a `hysteria2://` link (`--url`), parsed via `config`
+  into a `profile::Profile` and built into the client config, plus a `--socks5` listen address.
+  Usable on its own (per-app/browser proxying without a system-wide TUN); never linked into any
+  `ffi-*` lib. The SOCKS5 protocol itself is delegated to `fast-socks5`. The TUN front-end (the
+  `tunnel` netstack over a root-opened utun on macOS, which the iOS memory gate measures) is a
+  separate dev binary added alongside `tunnel/` in step 2. Tested against the mise-managed local
+  server (below).
 - `conn-error/` — a dependency-free leaf owning the connect-error enum (`AuthFailed |
 ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
   not link `model`) and relayed up; both `tunnel`/`hysteria` and `model` depend on it, neither on
@@ -372,8 +375,8 @@ the Avalonia layer displays it alongside a Copy button.
 
 Core-first: retire the two hardest risks early — protocol correctness and the iOS memory ceiling
 (§3.3) — before any OS/FFI/UI investment is built on top of them. The protocol is validated through
-a dev SOCKS5/TUN harness (`devproxy`, §5) against a mise-managed local server (§3.8); FFI and UI
-come once the core is proven.
+the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise-managed local server
+(§3.8); FFI and UI come once the core is proven.
 
 0. Workspace plus guardrails — `core/` virtual manifest with empty crate skeletons,
    `[workspace.dependencies]`/`[workspace.lints]` (`unsafe_code = "forbid"` except `ffi-*`),
@@ -384,12 +387,13 @@ come once the core is proven.
 1. Hysteria 2 client plus local SOCKS5 loop — `profile/` (leaf), `conn-error/`, and `hysteria/`
    (h3 auth handshake, TCP relay, UDP/datagram relay plus fragmentation, Brutal as a Quinn
    `congestion::Controller` — validate its pacing maps onto Quinn's pacer — Salamander obfs, port
-   hopping), driven off a hardcoded `profile::Profile`. `devproxy --socks5` exposes the client as a
-   local proxy: TCP `CONNECT` first, then UDP `ASSOCIATE` (SOCKS5 exercises the UDP/datagram relay,
+   hopping), driven off a `profile::Profile`. `socks5-bridge` exposes the client as a local SOCKS5
+   proxy: TCP `CONNECT` first, then UDP `ASSOCIATE` (SOCKS5 exercises the UDP/datagram relay,
    the riskiest path). Conformance against the mise-managed pinned reference server (rev `c3a806b`):
    `curl` over TCP and `dig` over UDP, with and without obfs, plus the `pinSHA256` cert-pin path
    (§7.3).
-2. Userspace TUN, standalone — `tunnel/` (smoltcp plus tun-rs) added as `devproxy --tun`: on macOS
+2. Userspace TUN, standalone — `tunnel/` (smoltcp plus tun-rs), exercised by its own dev TUN-harness
+   binary (the counterpart to `socks5-bridge`): on macOS
    open a utun via raw fd as root — no NE, no FFI — feed packets through smoltcp into the proven
    `hysteria` client. Validates the netstack end-to-end against the same local server; counts bytes
    at the smoltcp↔hysteria seam.
@@ -453,8 +457,8 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
 6. No logging in shipped builds — `ffi-app`/`ffi-ext` install no `tracing`/`log` subscriber, so
    dependency log events (`quinn`/`rustls`/`tokio`/`h3`) reach no sink and there is nothing to leak;
    the `conn-error` enum (§5), mapped to an int in the extension, is the only diagnostic channel, so
-   the server address cannot cross the boundary. Dev-only binaries and tests (`devproxy`,
-   conformance, the memory gate) keep `tracing` to stderr.
+   the server address cannot cross the boundary. The `socks5-bridge` binary and the dev/test
+   harnesses (conformance, the memory gate) keep `tracing` to stderr.
 7. Supply chain and licensing — pin every crate; enforce with `cargo-deny` (license plus RustSec
    advisories) and a NuGet license scan. Prefer reproducible builds.
 8. Protocol implementation is security-sensitive — conformance tests against the reference server,
