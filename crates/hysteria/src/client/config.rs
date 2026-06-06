@@ -505,7 +505,7 @@ mod tests {
             "bracketed IPv6 host:port"
         );
         assert_eq!(c.tls.server_name, "::1", "sni defaults to IPv6 host");
-        // A bare IPv6 literal must not be mis-split on its colons (default port).
+        // A bare IPv6 literal must not be split on its colons (default port).
         let c = Config::from_profile(&profile::Profile {
             server: "::1".into(),
             ..Default::default()
