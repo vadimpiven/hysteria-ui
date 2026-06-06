@@ -8,8 +8,7 @@
 //!
 //! # Two deliberate differences from the Go original
 //!
-//! Both need validating/tuning against the reference server at conformance
-//! (PLAN §6 step 1):
+//! Both need validating/tuning against the reference server at conformance:
 //!
 //! 1. **Pacing.** quic-go let Brutal install a custom token-bucket pacer
 //!    (`common.Pacer`) emitting at exactly `bandwidth / ack_rate`. quinn exposes

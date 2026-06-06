@@ -1,7 +1,7 @@
-//! `hysteria2://` share-link parsing and generation (PLAN §5 `config/`).
+//! `hysteria2://` share-link parsing and generation.
 //!
-//! Port of `app/cmd/client.go`'s `parseURI`/`URI`. App-side only: it turns an
-//! untrusted link into a [`profile::Profile`] and back. The structural split is
+//! Port of `app/cmd/client.go`'s `parseURI`/`URI`: it turns an untrusted link
+//! into a [`profile::Profile`] and back. The structural split is
 //! hand-rolled (the reference forks Go's `net/url` because a standard parser
 //! rejects the port-range host used for port hopping, e.g.
 //! `host:7000-10000,20000`); percent-encoding and query (de)serialization are

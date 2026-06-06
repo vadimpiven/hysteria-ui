@@ -1,4 +1,4 @@
-//! The parsed Hysteria 2 connection profile (PLAN §5 `profile/`).
+//! The parsed Hysteria 2 connection profile.
 //!
 //! Pure `serde` data — the leaf that everything connection-related is built
 //! from: the `config` crate produces a [`Profile`] from a `hysteria2://` link,
@@ -6,8 +6,8 @@
 //! holds no parser and depends on nothing but `serde`.
 //!
 //! Scope: the fields a `hysteria2://` link carries (server, auth, TLS, obfs)
-//! plus `fast_open`. Bandwidth and QUIC tuning are config-file-only in the
-//! reference and are deferred to the config-file work (PLAN step 4).
+//! plus `fast_open`. Bandwidth and QUIC tuning are not link-carryable (they are
+//! config-file-only in the reference), so they are not modeled here.
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -31,13 +31,14 @@ pub struct Profile {
     pub fast_open: bool,
 }
 
-/// TLS settings as a link carries them (PLAN §7.3).
+/// TLS settings as a `hysteria2://` link carries them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tls {
     /// TLS server name (SNI); empty means "derive from the server host".
     #[serde(default)]
     pub sni: String,
-    /// Skip CA verification. Only honored together with a pin (PLAN §7.3).
+    /// Skip CA verification. Must be paired with a pin: the client rejects an
+    /// `insecure` profile that has no `pin_sha256` rather than connecting blind.
     #[serde(default)]
     pub insecure: bool,
     /// SHA-256 of the server's end-entity certificate (the `pinSHA256` param),

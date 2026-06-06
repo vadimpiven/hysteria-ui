@@ -3,7 +3,7 @@
 //! `verify_and_fill` fills unset fields with defaults and rejects invalid
 //! values, mirroring the Go original. Differences: `server_addr` is a resolved
 //! [`SocketAddr`] (required by construction, so Go's nil check is unneeded), TLS
-//! is expressed as our pinning-oriented [`TlsConfig`] (PLAN §7.3) rather than a
+//! is expressed as our pinning-oriented [`TlsConfig`] rather than a
 //! `crypto/tls.Config`, and congestion control is derived from the bandwidth
 //! config by the client (Brutal when a TX bound is known, else BBR) rather than
 //! a separate `CongestionConfig` — Reno is not supported.
@@ -113,11 +113,11 @@ impl Config {
         Ok(())
     }
 
-    /// Build a client config from a parsed [`profile::Profile`] (PLAN: `hysteria`
-    /// owns the `&Profile -> client config` builder). Resolves the server
-    /// address — a trailing port range/list (e.g. `host:7000-8000,9000`) turns on
-    /// port hopping — normalizes and decodes the cert pin, and maps Salamander
-    /// obfuscation. SNI defaults to the server host when the link omits it.
+    /// Build a client config from a parsed [`profile::Profile`]. Resolves the
+    /// server address — a trailing port range/list (e.g. `host:7000-8000,9000`)
+    /// turns on port hopping — normalizes and decodes the cert pin, and maps
+    /// Salamander obfuscation. SNI defaults to the server host when the link
+    /// omits it.
     ///
     /// Resolving a hostname performs a blocking DNS lookup; an IP literal does
     /// not. Call it at setup, not on a hot path.
@@ -296,15 +296,15 @@ fn fill_window(value: &mut u64, default: u64, field: &str) -> Result<(), ConfigE
     Ok(())
 }
 
-/// TLS settings, expressed as the link carries them (PLAN §7.3): an SNI, the
+/// TLS settings, expressed as a `hysteria2://` link carries them: an SNI, the
 /// `insecure` flag, an optional cert pin, and an optional custom CA (DER).
 #[derive(Debug, Clone, Default)]
 pub struct TlsConfig {
     /// TLS server name (SNI).
     pub server_name: String,
     /// Skip CA verification. Must be combined with `pin_sha256`: an `insecure`
-    /// config without a pin is rejected at connect time (not silently ignored),
-    /// per the cert-pinning policy (PLAN §7.3).
+    /// config without a pin is rejected at connect time, not silently ignored —
+    /// pinning the end-entity cert is stronger than CA trust.
     pub insecure: bool,
     /// SHA-256 of the server's end-entity certificate (the `pinSHA256` param).
     pub pin_sha256: Option<[u8; 32]>,

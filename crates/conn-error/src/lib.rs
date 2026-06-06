@@ -1,13 +1,13 @@
 //! The connect-error enum: the single, secret-free diagnostic channel for the
 //! tunnel.
 //!
-//! A dependency-free leaf crate (PLAN.md §5). The privileged tunnel/extension —
-//! which must not link `model` (the app/ext wall, §3.8) — produces a
-//! [`ConnError`] on connect failure and relays it up; both `hysteria`/`tunnel`
-//! and `model` depend on this crate, neither on the other. It carries no server
-//! address or other secret, so it is safe to cross the FFI boundary, where it is
-//! [mapped to an int](ConnError::code) (§7.6). `model` turns it into one
-//! actionable UI sentence.
+//! A dependency-free leaf crate. The privileged tunnel/extension — which must
+//! not link the app's `model` crate — produces a [`ConnError`] on connect
+//! failure and relays it up; both `hysteria`/`tunnel` and `model` depend on this
+//! crate, neither on the other. It carries no server address or other secret, so
+//! it is safe to cross the FFI boundary, where it is
+//! [mapped to an int](ConnError::code). The app turns it into one actionable UI
+//! sentence.
 //!
 //! ```
 //! use conn_error::ConnError;
@@ -35,7 +35,7 @@ pub enum ConnError {
     AuthFailed = 1,
     /// The server could not be reached (DNS/route/refused).
     ServerUnreachable = 2,
-    /// The server certificate did not match the pinned `pinSHA256` (§7.3).
+    /// The server certificate did not match the pinned `pinSHA256`.
     TlsPinMismatch = 3,
     /// The connection attempt timed out.
     Timeout = 4,

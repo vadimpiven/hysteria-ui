@@ -5,8 +5,8 @@
 //! implements it for `http::HeaderMap`) — or any header container — can carry the
 //! handshake.
 //!
-//! Client-only crate (PLAN §5): the server-side counterparts
-//! (`AuthRequestFromHeader`, `AuthResponseToHeader`) are intentionally omitted.
+//! Client-only: the server-side counterparts (`AuthRequestFromHeader`,
+//! `AuthResponseToHeader`) are intentionally omitted.
 
 use super::padding;
 

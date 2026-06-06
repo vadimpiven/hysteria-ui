@@ -1,10 +1,9 @@
 //! A quinn `AsyncUdpSocket` that applies Salamander obfuscation per datagram.
 //!
 //! Port of the `extras/obfs` packet-conn wrapper onto quinn's socket
-//! abstraction (PLAN: "Salamander obfuscation as a wrapping `AsyncUdpSocket`").
-//! Outbound datagrams are obfuscated before hitting the wire; inbound datagrams
-//! are deobfuscated in place. GSO/GRO are disabled (one datagram per operation)
-//! since obfuscation is per-packet.
+//! abstraction. Outbound datagrams are obfuscated before hitting the wire;
+//! inbound datagrams are deobfuscated in place. GSO/GRO are disabled (one
+//! datagram per operation) since obfuscation is per-packet.
 
 use std::fmt;
 use std::io;

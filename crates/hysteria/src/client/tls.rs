@@ -1,4 +1,4 @@
-//! TLS client config with certificate pinning (PLAN §7.3).
+//! TLS client config with certificate pinning.
 //!
 //! Hysteria links carry `sni`, `insecure`, and `pinSHA256`. The pinning rules:
 //!
@@ -90,7 +90,7 @@ impl ServerCertVerifier for PinnedServerCertVerifier {
 }
 
 /// Build the rustls `ClientConfig` (TLS 1.3, ALPN `h3`) for the given TLS
-/// settings, applying the §7.3 pinning rules.
+/// settings, applying the pinning rules described in the module docs.
 pub fn build_rustls_client_config(tls: &TlsConfig) -> Result<ClientConfig, ConfigError> {
     let provider = Arc::new(default_provider());
     let builder = ClientConfig::builder_with_provider(Arc::clone(&provider))

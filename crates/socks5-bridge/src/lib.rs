@@ -1,5 +1,4 @@
-//! A standalone SOCKS5 front-end over the Hysteria 2 client (PLAN §5
-//! `socks5-bridge`).
+//! A standalone SOCKS5 front-end over the Hysteria 2 client.
 //!
 //! The SOCKS5 protocol (RFC 1928) — greeting, no-auth negotiation, request
 //! parsing, and UDP datagram framing — is delegated to `fast-socks5`. We only
@@ -7,7 +6,7 @@
 //! [`Client::tcp`] and `UDP ASSOCIATE` to a [`Client::udp`] session. It is a
 //! self-contained binary (per-app/browser proxying without a system-wide TUN)
 //! that doubles as the SOCKS5 conformance harness; it is never linked into the
-//! `ffi-*` libraries (the app/ext wall, PLAN §3.8).
+//! FFI libraries that the app and tunnel extension load.
 //!
 //! `SocketAddr` is a `std::net` address *value type* that `tokio` reuses (it has
 //! no replacement); all I/O uses `tokio::net`.

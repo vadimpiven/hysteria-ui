@@ -5,7 +5,7 @@
 //! [`super::varint`]. Functions that mix I/O and protocol errors return
 //! `io::Result`, with `ProtocolError` carried through `ErrorKind::InvalidData`.
 //!
-//! Client-only crate (PLAN §5): the server-side counterparts from `proxy.go`
+//! Client-only: the server-side counterparts from `proxy.go`
 //! (`ReadTCPRequest`, `WriteTCPResponse`) are intentionally omitted.
 
 use std::io;
