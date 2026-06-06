@@ -125,8 +125,9 @@ impl<I: UdpIo> UdpConn<I> {
     /// Send `data` to `addr`. Tries unfragmented first; if the transport reports
     /// the datagram is too large, fragments under a fresh random packet ID.
     ///
-    /// Not safe to call concurrently with itself (it reuses a shared scratch
-    /// buffer), matching the Go original.
+    /// Safe to call concurrently: the shared scratch buffer is mutex-guarded, so
+    /// concurrent callers serialize rather than race (Go's lock-free `SendBuf` is
+    /// instead documented as not thread-safe).
     pub fn send(&self, data: &[u8], addr: &str) -> Result<(), SendError> {
         let mut buf = lock(&self.send_buf);
         let mut msg = UdpMessage {
