@@ -319,8 +319,14 @@ impl Netstack {
 
             // smoltcp's recommended loop: a zero delay means "work is due now", so
             // re-poll immediately rather than arming a `sleep(0)` that hot-loops.
+            // Yield first, though: if the outbound flush above sent nothing there
+            // was no await this iteration, and on a current-thread runtime a run of
+            // zero-delay re-polls would starve the relay tasks sharing the executor.
             let timeout = match poll_delay {
-                Some(delay) if delay.total_micros() == 0 => continue,
+                Some(delay) if delay.total_micros() == 0 => {
+                    tokio::task::yield_now().await;
+                    continue;
+                },
                 Some(delay) => Duration::from_micros(delay.total_micros()),
                 None => IDLE_POLL,
             };

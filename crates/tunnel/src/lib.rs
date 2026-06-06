@@ -126,9 +126,13 @@ impl Handle {
     }
 
     /// Wait for the tunnel to finish (after a [`trigger_shutdown`](Self::trigger_shutdown),
-    /// a device error, or the netstack ending). Errors only if the task panicked.
-    pub async fn join(self) -> Result<()> {
-        self.join.await.context("tunnel task")
+    /// a device error, or the netstack ending) and return the final [`Stats`].
+    /// Reading them here — after every relay/session task has drained — gives
+    /// exact counts. Errors only if the task panicked.
+    pub async fn join(self) -> Result<Stats> {
+        let counters = self.counters;
+        self.join.await.context("tunnel task")?;
+        Ok(counters.snapshot())
     }
 }
 
@@ -150,7 +154,8 @@ pub fn spawn(device: Arc<AsyncDevice>, client: Arc<Client>, config: Config) -> H
 /// Run the netstack until the device errors or the netstack ends. The blocking
 /// convenience used by the `tun-bridge` dev harness; production uses [`spawn`].
 pub async fn run(device: Arc<AsyncDevice>, client: Arc<Client>, config: Config) -> Result<()> {
-    spawn(device, client, config).join().await
+    spawn(device, client, config).join().await?;
+    Ok(())
 }
 
 /// Drive accepted flows: splice TCP, NAT UDP, GC idle sessions, until a channel

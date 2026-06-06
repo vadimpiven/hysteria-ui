@@ -92,8 +92,8 @@ pub async fn run(cli: Cli) -> Result<()> {
     tokio::signal::ctrl_c().await.context("await Ctrl-C")?;
     eprintln!("disconnecting…");
     handle.trigger_shutdown();
-    let stats = handle.stats();
-    handle.join().await?;
+    // `join` returns the final stats once every relay/session task has drained.
+    let stats = handle.join().await?;
     eprintln!(
         "disconnected (tx={} rx={} tcp_flows={} udp_sessions={} flow_errors={})",
         stats.tx, stats.rx, stats.tcp_flows, stats.udp_sessions, stats.flow_errors,
