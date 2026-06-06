@@ -12,6 +12,7 @@
 #![expect(clippy::print_stderr, reason = "CLI status output")]
 
 use std::net::Ipv4Addr;
+use std::net::Ipv6Addr;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -35,6 +36,12 @@ pub struct Cli {
     /// Prefix length of the TUN subnet.
     #[arg(long, default_value_t = 24)]
     pub tun_prefix: u8,
+    /// Optional IPv6 address for the TUN interface (enables IPv6 proxying).
+    #[arg(long, value_name = "IPV6")]
+    pub tun_addr6: Option<Ipv6Addr>,
+    /// Prefix length of the IPv6 TUN subnet.
+    #[arg(long, default_value_t = 64)]
+    pub tun_prefix6: u8,
     /// TUN MTU.
     #[arg(long, default_value_t = 1500)]
     pub mtu: u16,
@@ -54,13 +61,13 @@ pub async fn run(cli: Cli) -> Result<()> {
         info.udp_enabled, info.tx
     );
 
-    let device = Arc::new(
-        DeviceBuilder::new()
-            .ipv4(cli.tun_addr, cli.tun_prefix, None)
-            .mtu(cli.mtu)
-            .build_async()
-            .context("open TUN device")?,
-    );
+    let mut builder = DeviceBuilder::new()
+        .ipv4(cli.tun_addr, cli.tun_prefix, None)
+        .mtu(cli.mtu);
+    if let Some(addr6) = cli.tun_addr6 {
+        builder = builder.ipv6(addr6, cli.tun_prefix6);
+    }
+    let device = Arc::new(builder.build_async().context("open TUN device")?);
     let name = device.name().context("TUN name")?;
     eprintln!(
         "TUN up: {name} ({}/{}, mtu {}) — add routes into it to proxy traffic, e.g.\n  \
@@ -71,9 +78,27 @@ pub async fn run(cli: Cli) -> Result<()> {
     let netstack = tunnel::Config {
         address: cli.tun_addr,
         prefix: cli.tun_prefix,
+        address6: cli.tun_addr6,
+        prefix6: cli.tun_prefix6,
         mtu: usize::from(cli.mtu),
+        limits: tunnel::Limits::default(),
     };
-    tunnel::run(device, Arc::new(client), netstack).await
+
+    // Production wires the OS-provided fd into `tunnel::spawn` from `ffi-ext`
+    // (which wraps it via `unsafe AsyncDevice::from_fd`); here we drive the same
+    // handle API over a self-opened utun, tearing down gracefully on Ctrl-C.
+    let handle = tunnel::spawn(device, Arc::new(client), netstack);
+    eprintln!("connected; press Ctrl-C to disconnect");
+    tokio::signal::ctrl_c().await.context("await Ctrl-C")?;
+    eprintln!("disconnecting…");
+    handle.trigger_shutdown();
+    let stats = handle.stats();
+    handle.join().await?;
+    eprintln!(
+        "disconnected (tx={} rx={} tcp_flows={} udp_sessions={} flow_errors={})",
+        stats.tx, stats.rx, stats.tcp_flows, stats.udp_sessions, stats.flow_errors,
+    );
+    Ok(())
 }
 
 /// Parse the link and build the client config (blocking: resolves the server).
