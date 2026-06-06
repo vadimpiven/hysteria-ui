@@ -1,4 +1,6 @@
 packages:
+  - crates/conn-error
+  - crates/devproxy
   - crates/hysteria
 
 allowBuilds: {}

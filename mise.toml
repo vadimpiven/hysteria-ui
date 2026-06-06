@@ -487,6 +487,20 @@ depends = ["upgrade:pnpm", "upgrade:cargo", "upgrade:uv"]
 # ============================================================================
 
 # --- CI Build tasks ---
+[tasks."ci-build:conn-error"]
+description = "Build conn-error crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/conn-error --if-present run ci-build'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-build:devproxy"]
+description = "Build devproxy crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/devproxy --if-present run ci-build'
+sources = ["crates/devproxy/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-build:hysteria"]
 description = "Build hysteria crate for CI"
 hide = true
@@ -497,9 +511,23 @@ sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 [tasks."ci-build"]
 description = "Build all crates for CI"
 hide = true
-depends = ["ci-build:hysteria"]
+depends = ["ci-build:conn-error", "ci-build:devproxy", "ci-build:hysteria"]
 
 # --- CI Test tasks ---
+[tasks."ci-test:conn-error"]
+description = "Run CI tests for conn-error crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/conn-error --if-present run ci-test'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test:devproxy"]
+description = "Run CI tests for devproxy crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/devproxy --if-present run ci-test'
+sources = ["crates/devproxy/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-test:hysteria"]
 description = "Run CI tests for hysteria crate"
 hide = true
@@ -510,9 +538,23 @@ sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 [tasks."ci-test"]
 description = "Run all CI tests"
 hide = true
-depends = ["ci-test:hysteria"]
+depends = ["ci-test:conn-error", "ci-test:devproxy", "ci-test:hysteria"]
 
 # --- Build tasks ---
+[tasks."build:conn-error"]
+description = "Build conn-error crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/conn-error --if-present run build'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."build:devproxy"]
+description = "Build devproxy crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/devproxy --if-present run build'
+sources = ["crates/devproxy/**/*", "Cargo.{toml,lock}"]
+
 [tasks."build:hysteria"]
 description = "Build hysteria crate"
 hide = true
@@ -523,9 +565,23 @@ sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 [tasks.build]
 description = "Compile all crates"
 alias = "b"
-depends = ["build:hysteria"]
+depends = ["build:conn-error", "build:devproxy", "build:hysteria"]
 
 # --- Test tasks ---
+[tasks."test:conn-error"]
+description = "Run tests for conn-error crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/conn-error --if-present run test'
+sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
+
+[tasks."test:devproxy"]
+description = "Run tests for devproxy crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/devproxy --if-present run test'
+sources = ["crates/devproxy/**/*", "Cargo.{toml,lock}"]
+
 [tasks."test:hysteria"]
 description = "Run tests for hysteria crate"
 hide = true
@@ -536,7 +592,7 @@ sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 [tasks.test]
 description = "Run all tests"
 alias = "t"
-depends = ["test:hysteria"]
+depends = ["test:conn-error", "test:devproxy", "test:hysteria"]
 
 # ============================================================================
 # ASSISTANCE TASKS

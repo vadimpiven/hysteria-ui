@@ -66,6 +66,10 @@ importers:
         specifier: 'catalog:'
         version: 6.0.3
 
+  crates/conn-error: {}
+
+  crates/devproxy: {}
+
   crates/hysteria: {}
 
 packages:

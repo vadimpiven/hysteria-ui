@@ -1,0 +1,12 @@
+[package]
+name = "conn-error"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+pretty_assertions.workspace = true
