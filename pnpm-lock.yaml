@@ -66,6 +66,8 @@ importers:
         specifier: 'catalog:'
         version: 6.0.3
 
+  crates/hysteria: {}
+
 packages:
 
   '@noble/hashes@1.4.0':

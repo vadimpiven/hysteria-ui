@@ -486,10 +486,62 @@ depends = ["upgrade:pnpm", "upgrade:cargo", "upgrade:uv"]
 # BUILD & TEST TASKS - Build and test the project
 # ============================================================================
 
-# Boot the reference Hysteria 2 server for conformance tests (§3.8). Generates a
-# self-signed cert, runs `hysteria server` with a caller-supplied config, and
-# prints the matching client config as JSON. Extra args are forwarded, e.g.:
-#   mise run hysteria-server -- --config '{"auth":{...}}'
+# --- CI Build tasks ---
+[tasks."ci-build:hysteria"]
+description = "Build hysteria crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/hysteria --if-present run ci-build'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-build"]
+description = "Build all crates for CI"
+hide = true
+depends = ["ci-build:hysteria"]
+
+# --- CI Test tasks ---
+[tasks."ci-test:core"]
+description = "Run CI tests for hysteria crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/hysteria --if-present run ci-test'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test"]
+description = "Run all CI tests"
+hide = true
+depends = ["ci-test:hysteria"]
+
+# --- Build tasks ---
+[tasks."build:core"]
+description = "Build hysteria crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/hysteria --if-present run build'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks.build]
+description = "Compile all crates"
+alias = "b"
+depends = ["build:hysteria"]
+
+# --- Test tasks ---
+[tasks."test:hysteria"]
+description = "Run tests for hysteria crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/hysteria --if-present run test'
+sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks.test]
+description = "Run all tests"
+alias = "t"
+depends = ["test:hysteria"]
+
+# ============================================================================
+# ASSISTANCE TASKS
+# ============================================================================
+
 [tasks."hysteria-server"]
 description = "Run the reference Hysteria 2 server for conformance tests"
 run = "node scripts/hysteria-server.ts"
