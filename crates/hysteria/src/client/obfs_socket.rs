@@ -22,7 +22,9 @@ use quinn::udp::Transmit;
 
 use crate::internal::obfs::SalamanderObfuscator;
 
-/// QUIC packets are at most ~1500 bytes, so 2 KiB covers a datagram plus salt.
+/// Scratch size for a datagram plus the 8-byte salt (Go's `udpBufferSize`).
+/// quinn's MTU-discovery upper bound defaults to 1452 bytes, so an obfuscated
+/// packet stays well under 2 KiB even with path-MTU discovery enabled.
 const UDP_BUFFER_SIZE: usize = 2048;
 
 /// Wraps an inner [`AsyncUdpSocket`], obfuscating every datagram.
