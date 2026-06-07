@@ -1,9 +1,9 @@
 //! A byte-counting `AsyncRead`/`AsyncWrite` wrapper.
 //!
 //! Wraps the Hysteria side of a relay so the netstack reports live traffic at the
-//! smoltcp↔hysteria seam (PLAN §5). Reads add to `rx` (server→app bytes); writes
-//! add to `tx` (app→server bytes). Counting only the hysteria side — never the
-//! smoltcp side too — keeps each byte counted exactly once.
+//! smoltcp↔hysteria seam. Reads add to `rx` (server→app bytes); writes add to
+//! `tx` (app→server bytes). Counting only the hysteria side — never the smoltcp
+//! side too — keeps each byte counted exactly once.
 
 use std::io;
 use std::pin::Pin;

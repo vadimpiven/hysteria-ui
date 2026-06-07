@@ -90,7 +90,7 @@ impl Counters {
     }
 }
 
-/// A snapshot of cumulative tunnel traffic, for the stats surface (PLAN §5).
+/// A snapshot of cumulative tunnel traffic, for the model's stats surface.
 #[derive(Debug, Clone, Copy)]
 pub struct Stats {
     /// Bytes sent app→server.

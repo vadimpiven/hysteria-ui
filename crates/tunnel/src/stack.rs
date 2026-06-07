@@ -64,15 +64,15 @@ const MAX_EXT_HEADERS: usize = 8;
 /// Scratch buffer for draining UDP datagrams (max IP payload).
 const UDP_SCRATCH: usize = 65_535;
 
-/// Per-socket buffer sizes and concurrency caps. All bounded for the iOS
-/// `NetworkExtension` memory cap (PLAN §3.3); exposed on [`Config`] so the FFI
-/// layer can shrink them for the iOS budget without touching this crate.
+/// Per-socket buffer sizes and concurrency caps, all bounded so the netstack's
+/// memory is provisioned, not unbounded. Exposed on [`Config`] so the FFI layer
+/// can shrink them to fit a tight host budget (the iOS `NetworkExtension` cap is
+/// the binding one, ~15 MiB on older devices) without touching this crate.
 ///
 /// Worst-case smoltcp buffer ceiling with the defaults:
 /// `max_tcp_flows × (tcp_rx + tcp_tx)` (512 × 32 KiB = 16 MiB) plus
-/// `max_udp_sockets × (udp_rx + udp_tx)` (256 × 48 KiB ≈ 12 MiB) ≈ 28 MiB. That
-/// exceeds the ~15 MiB-class NE budget, so the iOS gate (roadmap step 3) lowers
-/// these against real RSS.
+/// `max_udp_sockets × (udp_rx + udp_tx)` (256 × 48 KiB ≈ 12 MiB) ≈ 28 MiB —
+/// above that budget, so the embedder lowers these against real measured RSS.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Max concurrent TCP flows; further SYNs are left unanswered (like a full
