@@ -378,6 +378,10 @@ async fn orchestrate(ns: Netstack) {
             },
             _ = gc.tick() => sessions.reap_idle(Instant::now(), UDP_IDLE),
             Some(_) = relays.join_next() => {},
+            // An infra task ending (the runner, either TUN pump, or the UDP
+            // writer) means the data path is broken — e.g. the device errored —
+            // so tear the whole tunnel down rather than stall silently.
+            Some(_) = infra.join_next() => break,
             _ = shutdown.changed() => break,
         }
     }

@@ -14,6 +14,7 @@
 // The binary prints listen/connection status to stderr.
 #![expect(clippy::print_stderr, reason = "CLI status output")]
 
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -99,6 +100,12 @@ pub async fn serve(listener: TcpListener, client: Arc<Client>) -> Result<()> {
 
 /// Run the SOCKS5 handshake (delegated to `fast-socks5`) and dispatch the command.
 async fn handle(stream: TcpStream, client: Arc<Client>) -> Result<()> {
+    // The local IP the client reached us on — the UDP relay binds here so the
+    // address we hand back is reachable from wherever the client is.
+    let local_ip = stream
+        .local_addr()
+        .context("connection local address")?
+        .ip();
     let (proto, cmd, target) = Socks5ServerProtocol::accept_no_auth(stream)
         .await
         .context("SOCKS5 handshake")?
@@ -108,7 +115,7 @@ async fn handle(stream: TcpStream, client: Arc<Client>) -> Result<()> {
 
     match cmd {
         Socks5Command::TCPConnect => handle_connect(proto, target.to_string(), client).await,
-        Socks5Command::UDPAssociate => handle_udp_associate(proto, client).await,
+        Socks5Command::UDPAssociate => handle_udp_associate(proto, client, local_ip).await,
         Socks5Command::TCPBind => {
             proto.reply_error(&ReplyError::CommandNotSupported).await?;
             bail!("SOCKS5 BIND is not supported");
@@ -144,8 +151,11 @@ async fn handle_connect(
 async fn handle_udp_associate(
     proto: Socks5ServerProtocol<TcpStream, CommandRead>,
     client: Arc<Client>,
+    local_ip: IpAddr,
 ) -> Result<()> {
-    let relay = UdpSocket::bind(("127.0.0.1", 0))
+    // Bind on the same interface the client reached us on (loopback for a local
+    // client, the LAN/public IP for a remote one) so `relay_addr` is reachable.
+    let relay = UdpSocket::bind((local_ip, 0))
         .await
         .context("bind UDP relay")?;
     let relay_addr = relay.local_addr().context("relay addr")?;

@@ -149,8 +149,10 @@ impl<R: UdpRelay> Sessions<R> {
         for src in idle_keys(&self.map, now, idle) {
             if let Some(entry) = self.map.remove(&src) {
                 entry.task.abort();
-                // Dropping `entry.conn` (the map's last strong ref once the task
-                // is aborted) runs `UdpConn::Drop`, closing the session.
+                // `abort` only schedules cancellation: the receive task holds its
+                // own `Arc<conn>`, so the session closes (via `UdpConn::Drop`)
+                // once the executor drops the aborted task *and* this `entry.conn`
+                // — soon after, not synchronously here.
             }
         }
     }
