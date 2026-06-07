@@ -222,7 +222,9 @@ pub(crate) fn start(
         device: tun_device,
     }));
     let notify = Arc::new(Notify::new());
-    let (flow_tx, flow_rx) = mpsc::channel::<TcpFlow>(64);
+    // Size the flow channel to the flow cap so `try_reserve` only refuses a SYN
+    // when we are genuinely at `max_tcp_flows`, not at an unrelated smaller bound.
+    let (flow_tx, flow_rx) = mpsc::channel::<TcpFlow>(config.limits.max_tcp_flows);
     let (udp_in_tx, udp_in_rx) = mpsc::channel::<UdpInbound>(256);
     let (udp_out_tx, udp_out_rx) = mpsc::channel::<UdpOutbound>(256);
 
@@ -379,17 +381,22 @@ fn detect(
     let Some(detected) = s.device.peek_inbound().and_then(classify) else {
         return;
     };
-    match detected {
+    let serviced = match detected {
         Detected::TcpSyn { src, dst } => {
-            accept_tcp(s, handles, notify, shared, flow_tx, limits, src, dst);
+            accept_tcp(s, handles, notify, shared, flow_tx, limits, src, dst)
         },
-        Detected::Udp { dst } => {
-            udp_sockets.ensure(s, dst, limits, now);
-        },
+        Detected::Udp { dst } => udp_sockets.ensure(s, dst, limits, now),
+    };
+    // If no socket will handle this packet (backlog full), drop it before the
+    // poll so smoltcp doesn't RST/ICMP-reject it — the client just retransmits.
+    if !serviced {
+        s.device.pop_inbound();
     }
 }
 
 /// Create the listening TCP socket for a new flow and hand it to the relay.
+/// Returns whether the SYN will be serviced (a socket now listens, or one already
+/// does for a retransmit); `false` means the caller should drop the packet.
 #[expect(
     clippy::too_many_arguments,
     reason = "netstack task state, threaded in"
@@ -403,21 +410,19 @@ fn accept_tcp(
     limits: &Limits,
     src: SocketAddr,
     dst: SocketAddr,
-) {
+) -> bool {
     if handles.values().any(|f| f.key == (src, dst)) {
-        return; // already tracking this flow (a SYN retransmit)
+        return true; // already tracking this flow; its socket handles the SYN retransmit
     }
     if handles.len() >= limits.max_tcp_flows {
-        return; // backlog full: leave the SYN unanswered, like a real listener
+        return false; // backlog full: caller drops the SYN, like a real listener
     }
 
-    // Reserve a channel slot *before* creating the socket/stream. If the relay
-    // backlog is full (or the receiver is gone), we leave the SYN unanswered —
-    // like a real listener — without ever constructing, then tearing down, a
-    // socket. Tearing one down here would drop the `TcpStream` while we hold the
-    // `Shared` lock, and its `Drop` re-locks the same non-reentrant mutex.
+    // Reserve a channel slot *before* creating the socket/stream, so a full relay
+    // backlog (or a gone receiver) never drops a `TcpStream` while we hold the
+    // `Shared` lock — its `Drop` re-locks the same non-reentrant mutex.
     let Ok(permit) = flow_tx.try_reserve() else {
-        return;
+        return false;
     };
 
     let mut socket = tcp::Socket::new(
@@ -431,7 +436,7 @@ fn accept_tcp(
         port: dst.port(),
     };
     if socket.listen(endpoint).is_err() {
-        return;
+        return false;
     }
     let handle = s.sockets.add(socket);
 
@@ -450,16 +455,25 @@ fn accept_tcp(
             alive: Arc::downgrade(&alive),
         },
     );
+    true
 }
 
-/// Remove sockets whose relay stream has dropped, freeing their buffers. Safe
-/// only because a live stream keeps its liveness token, so we never remove a
-/// handle a `TcpStream` still references. The stream's `Drop` already queued a
-/// FIN via `close()`, which the preceding `poll` flushed.
+/// Remove sockets whose relay stream has dropped *and* whose close handshake has
+/// finished — both conditions required. The liveness token failing to upgrade
+/// means the `TcpStream` is gone, so the handle is unreferenced (smoltcp recycles
+/// slots, which would otherwise cross-wire a live stream onto another flow). The
+/// socket reaching `Closed` means the FIN/ACK exchange that `Drop`'s `close()`
+/// began has completed; reaping earlier (in FIN-WAIT/TIME-WAIT) would make smoltcp
+/// answer the peer's FIN-ACK with a RST instead of a clean close. smoltcp drives
+/// TIME-WAIT to `Closed` on its own (~10 s timer), and our per-socket `set_timeout`
+/// aborts a half-closed-but-silent peer, so this always converges.
 fn reap_finished(s: &mut Shared, handles: &mut Handles) {
     let finished: Vec<SocketHandle> = handles
         .iter()
-        .filter(|(_, flow)| flow.alive.upgrade().is_none())
+        .filter(|(handle, flow)| {
+            flow.alive.upgrade().is_none()
+                && s.sockets.get::<tcp::Socket<'_>>(**handle).state() == tcp::State::Closed
+        })
         .map(|(&handle, _)| handle)
         .collect();
     for handle in finished {

@@ -34,6 +34,15 @@ impl TunDevice {
         self.inbound.push_back(packet);
     }
 
+    /// Discard the next inbound packet. Used to decline a flow without letting
+    /// the poll see it: an un-accepted SYN/datagram would otherwise be answered
+    /// with a RST (or ICMP reject) because `any_ip` treats every destination as
+    /// local. Dropping it instead makes the client retransmit, like a real
+    /// listener whose backlog is full.
+    pub(crate) fn pop_inbound(&mut self) {
+        self.inbound.pop_front();
+    }
+
     pub(crate) fn pop_outbound(&mut self) -> Option<Vec<u8>> {
         self.outbound.pop_front()
     }
