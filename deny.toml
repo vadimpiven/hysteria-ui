@@ -232,14 +232,24 @@ deny = [
 #exact = true
 
 # Certain crates/versions that will be skipped when doing duplicate detection.
-# Unavoidable transitive version skew we can't influence upstream; revisit when
-# the upstreams catch up. All are confined to socks5-bridge (not linked into the
-# shipped ffi-* libs) or are Windows-only (we ship Windows last, PLAN §6).
+# Unavoidable transitive version skew we can't influence upstream (we pin our own
+# crates exactly); revisit when the upstreams catch up. Grouped by source.
 skip = [
+    # socks5-bridge (dev/test front-end; not linked into the shipped ffi-* libs)
     { crate = "socket2@0.5", reason = "fast-socks5 (socks5-bridge) pins socket2 0.5; quinn/tokio use 0.6" },
     { crate = "thiserror@1", reason = "fast-socks5 + tokio-socks (socks5-bridge) pin thiserror 1.x; quinn uses 2.x" },
     { crate = "thiserror-impl@1", reason = "transitive proc-macro for thiserror 1.x (socks5-bridge)" },
+    # TUN stack: smoltcp (via netstack-smoltcp) and tun-rs's own deps (netconfig-rs/route_manager)
+    { crate = "bitflags@1", reason = "smoltcp (via netstack-smoltcp) pins bitflags 1.x; the tree is on 2.x" },
+    { crate = "rand@0.8", reason = "netstack-smoltcp pins rand 0.8; hysteria/store use 0.9" },
+    { crate = "rand_chacha@0.3", reason = "transitive via rand 0.8 (netstack-smoltcp)" },
+    { crate = "rand_core@0.6", reason = "transitive via rand 0.8 (netstack-smoltcp)" },
+    { crate = "getrandom@0.2", reason = "transitive via rand 0.8 (netstack-smoltcp); the tree is on 0.3" },
+    { crate = "nix@0.30", reason = "netconfig-rs (a tun-rs dep) pins nix 0.30; tun-rs uses 0.31" },
+    { crate = "netlink-packet-route@0.25", reason = "netconfig-rs pins 0.25; route_manager (tun-rs) uses 0.28" },
+    # Windows-only (we ship Windows last, PLAN §6)
     { crate = "windows-sys@0.52", reason = "quinn-udp pins windows-sys 0.52; the rest of the tree is on 0.61 (Windows-only)" },
+    { crate = "windows-link@0.1", reason = "windows 0.61 (via tun-rs/netconfig-rs) pins windows-link 0.1; jni/windows-sys 0.61 use 0.2 (Windows-only)" },
 ]
 # Similarly to `skip` allows you to skip certain crates during duplicate
 # detection. Unlike skip, it also includes the entire tree of transitive
