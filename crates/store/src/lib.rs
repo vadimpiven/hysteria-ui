@@ -30,6 +30,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use tempfile::NamedTempFile;
 use uuid::Builder;
+use zeroize::Zeroizing;
 
 /// The bytes of a stored secret: a [`profile::Profile`] serialized to JSON,
 /// opaque to the [`SecureStore`] backend.
@@ -176,7 +177,7 @@ impl<S: SecureStore> Store<S> {
     /// # Errors
     /// Clock, [`SecureStore`], or persistence failure.
     pub fn add(&mut self, link: &Profile, name: Option<&str>) -> Result<Entry, StoreError> {
-        if let Some(existing) = self.find_matching(link)? {
+        if let Some(existing) = self.find_matching(link) {
             return Ok(existing);
         }
 
@@ -189,8 +190,8 @@ impl<S: SecureStore> Store<S> {
 
         // Write the secret first: a half-written add then leaves an orphaned
         // secret (overwritten on retry) rather than a metadata entry whose link
-        // cannot be loaded.
-        let secret = serde_json::to_vec(link)?;
+        // cannot be loaded. The serialized bytes are wiped from memory on drop.
+        let secret = Zeroizing::new(serde_json::to_vec(link)?);
         self.secure.set(&id, &secret)?;
 
         let entry = Entry {
@@ -209,14 +210,17 @@ impl<S: SecureStore> Store<S> {
     }
 
     /// Delete the entry `id` and its secret. Returns whether an entry was
-    /// present. The secret is removed even if no metadata entry exists.
+    /// present. Removing the secret is best-effort (a stray secret is harmless
+    /// and gets overwritten if the id recurs, as in [`add`](Self::add)), so a
+    /// `SecureStore` failure never leaves the return value disagreeing with what
+    /// [`list`](Self::list) shows. Only a persistence failure surfaces as `Err`.
     ///
     /// # Errors
-    /// [`SecureStore`] or persistence failure.
+    /// Persistence (metadata-document write) failure.
     pub fn delete(&mut self, id: &str) -> Result<bool, StoreError> {
         let Some(pos) = self.entries.iter().position(|e| e.id == id) else {
-            // No metadata, but clear any stray secret defensively.
-            self.secure.delete(id)?;
+            // No metadata; clear any stray secret, best-effort.
+            let _ = self.secure.delete(id);
             return Ok(false);
         };
         let removed = self.entries.remove(pos);
@@ -224,7 +228,9 @@ impl<S: SecureStore> Store<S> {
             self.entries.insert(pos, removed);
             return Err(e);
         }
-        self.secure.delete(id)?;
+        // Metadata (the list's source of truth) is gone; the secret removal is
+        // best-effort so it cannot leave list() and the return value disagreeing.
+        let _ = self.secure.delete(id);
         Ok(true)
     }
 
@@ -266,25 +272,30 @@ impl<S: SecureStore> Store<S> {
     /// [`SecureStore`] or deserialization failure.
     pub fn load(&self, id: &str) -> Result<Option<Profile>, StoreError> {
         match self.secure.get(id)? {
-            Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            // Wipe the serialized secret from memory once it is deserialized.
+            Some(bytes) => {
+                let bytes = Zeroizing::new(bytes);
+                Ok(Some(serde_json::from_slice(&bytes)?))
+            },
             None => Ok(None),
         }
     }
 
-    /// Find an existing entry whose stored link equals `link` (dedup key).
-    fn find_matching(&self, link: &Profile) -> Result<Option<Entry>, StoreError> {
-        for entry in &self.entries {
-            if self.load(&entry.id)?.as_ref() == Some(link) {
-                return Ok(Some(entry.clone()));
-            }
-        }
-        Ok(None)
+    /// Find an existing entry whose stored link equals `link` (the dedup key). A
+    /// secret that cannot be read (locked device, corruption) is treated as a
+    /// non-match, so one unreadable entry never blocks adding a new profile.
+    fn find_matching(&self, link: &Profile) -> Option<Entry> {
+        self.entries
+            .iter()
+            .find(|entry| matches!(self.load(&entry.id), Ok(Some(p)) if &p == link))
+            .cloned()
     }
 
     /// Write the metadata document atomically: write a sibling temp file via
-    /// `tempfile`, then rename it over the target (atomic on the same
+    /// `tempfile`, `fsync` it, then rename it over the target (atomic on the same
     /// filesystem). The temp file gets a unique, `O_EXCL` name in the same
-    /// directory, so concurrent writers and symlink races are not a concern.
+    /// directory, so concurrent writers and symlink races are not a concern; the
+    /// `fsync` ensures a crash cannot leave a renamed-but-empty document.
     fn persist(&self) -> Result<(), StoreError> {
         let parent = self.doc_path.parent().unwrap_or(Path::new("."));
         fs::create_dir_all(parent)?;
@@ -295,6 +306,7 @@ impl<S: SecureStore> Store<S> {
         let bytes = serde_json::to_vec_pretty(&doc)?;
         let mut tmp = NamedTempFile::new_in(parent)?;
         tmp.write_all(&bytes)?;
+        tmp.as_file().sync_all()?;
         tmp.persist(&self.doc_path)
             .map_err(|e| StoreError::Io(e.error))?;
         Ok(())
@@ -561,6 +573,23 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn delete_succeeds_when_secret_removal_fails() -> anyhow::Result<()> {
+        let (_dir, path) = temp_doc()?;
+        let mut store = Store::new(&path, FailDeleteStore::default())?;
+        let entry = store.add(&sample("example.com:443", "tok"), Some("Home"))?;
+
+        // The SecureStore's delete errors, but the metadata removal is the source
+        // of truth: delete must still report success and drop the entry, never
+        // leaving list() disagreeing with the return value.
+        assert!(
+            store.delete(&entry.id)?,
+            "delete succeeds despite a SecureStore delete failure"
+        );
+        assert!(store.list().is_empty(), "metadata entry is gone");
+        Ok(())
+    }
+
     // `&DevSecureStore` is itself a `SecureStore`, so a borrowed backend can be
     // shared across reopened stores in tests.
     impl SecureStore for &DevSecureStore {
@@ -572,6 +601,23 @@ mod tests {
         }
         fn delete(&self, id: &str) -> Result<(), SecureStoreError> {
             (**self).delete(id)
+        }
+    }
+
+    /// A `SecureStore` that stores normally but always fails `delete`, to test
+    /// the best-effort secret-removal path.
+    #[derive(Default)]
+    struct FailDeleteStore(DevSecureStore);
+
+    impl SecureStore for FailDeleteStore {
+        fn get(&self, id: &str) -> Result<Option<SecretBytes>, SecureStoreError> {
+            self.0.get(id)
+        }
+        fn set(&self, id: &str, secret: &[u8]) -> Result<(), SecureStoreError> {
+            self.0.set(id, secret)
+        }
+        fn delete(&self, _id: &str) -> Result<(), SecureStoreError> {
+            Err(SecureStoreError::new("backend offline"))
         }
     }
 }

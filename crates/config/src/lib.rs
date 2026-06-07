@@ -32,6 +32,34 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
+/// Characters kept unescaped in the `#fragment` (the display name): the RFC 3986
+/// `fragment` set (`pchar` / `/` / `?`), so a name like `Work: NYC!` stays
+/// readable as `Work:%20NYC!` rather than over-escaping `:`/`!`/`@`. `#` is not
+/// in the set, so a literal `#` in a name is still encoded.
+const FRAGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    // unreserved
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    // sub-delims
+    .remove(b'!')
+    .remove(b'$')
+    .remove(b'&')
+    .remove(b'\'')
+    .remove(b'(')
+    .remove(b')')
+    .remove(b'*')
+    .remove(b'+')
+    .remove(b',')
+    .remove(b';')
+    .remove(b'=')
+    // pchar extras, plus `/` and `?` allowed in a fragment
+    .remove(b':')
+    .remove(b'@')
+    .remove(b'/')
+    .remove(b'?');
+
 /// Parse a `hysteria2://` (or `hy2://`) link into a [`Profile`]. Returns `None`
 /// if `s` is not such a link (a non-matching scheme, or no host), mirroring the
 /// reference's "is this a URI?" boolean.
@@ -120,7 +148,7 @@ pub fn to_uri_with_name(p: &Profile, name: Option<&str>) -> String {
     };
     let base = format!("hysteria2://{userinfo}{server}/{query}", server = p.server);
     match name.map(str::trim).filter(|n| !n.is_empty()) {
-        Some(n) => format!("{base}#{}", encode_component(n)),
+        Some(n) => format!("{base}#{}", utf8_percent_encode(n, FRAGMENT)),
         None => base,
     }
 }
@@ -338,6 +366,19 @@ mod tests {
             parse_uri(&link).map(|p| p.server),
             Some("example.com:443".to_string()),
             "and the profile still parses from the same link",
+        );
+
+        // Fragment-valid punctuation stays readable (not over-escaped); only
+        // the space is encoded.
+        let link = to_uri_with_name(&profile, Some("Work: NYC!"));
+        assert!(
+            link.ends_with("#Work:%20NYC!"),
+            "fragment keeps `:` and `!` unescaped: {link}",
+        );
+        assert_eq!(
+            name_from_uri(&link),
+            Some("Work: NYC!".to_string()),
+            "the punctuated name still round-trips",
         );
 
         // An empty/whitespace name emits no fragment (matches `to_uri`).

@@ -23,6 +23,9 @@ thiserror.workspace = true
 tempfile.workspace = true
 # UUID type + RFC 4122 v4 formatting for profile ids.
 uuid.workspace = true
+# Wipe serialized-secret byte buffers after handing them to / reading them from
+# the SecureStore.
+zeroize.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
