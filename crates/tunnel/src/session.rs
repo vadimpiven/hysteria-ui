@@ -111,6 +111,30 @@ impl<R: UdpRelay> Sessions<R> {
         Some(conn)
     }
 
+    /// Forward one app datagram to `dst` through `src`'s session, opening the
+    /// session (via `create`) on first use. Returns whether it was sent — `false`
+    /// covers both "no session" and a transport error, which the caller counts as
+    /// a flow error. This is the send half of Go's `NewPacketConnection`
+    /// (`rc.Send(buffer.Bytes(), addr.String())`); the receive half is the task
+    /// spawned in `get_or_create`.
+    pub(crate) fn forward<F>(
+        &mut self,
+        src: SocketAddr,
+        dst: SocketAddr,
+        data: &[u8],
+        now: Instant,
+        ctx: &RecvCtx,
+        create: F,
+    ) -> bool
+    where
+        F: FnOnce() -> Option<Arc<R>>,
+    {
+        let Some(conn) = self.get_or_create(src, now, ctx, create) else {
+            return false;
+        };
+        conn.send(data, &dst.to_string())
+    }
+
     /// Drop sessions idle longer than `idle` (closing the Hysteria session and
     /// stopping its reply task).
     pub(crate) fn reap_idle(&mut self, now: Instant, idle: Duration) {
@@ -266,6 +290,32 @@ mod tests {
         // 301 s later with a 300 s idle window → reaped.
         sessions.reap_idle(start + Duration::from_secs(301), Duration::from_mins(5));
         assert_eq!(sessions.len(), 0, "stale session reaped");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn forward_sends_datagram_to_destination() -> Result<()> {
+        let (ctx, _rx) = ctx();
+        let mut sessions: Sessions<FakeRelay> = Sessions::new();
+        let src: SocketAddr = "10.0.0.2:40000".parse()?;
+        let dst: SocketAddr = "1.1.1.1:53".parse()?;
+        let relay = Arc::new(FakeRelay {
+            sent: Mutex::new(Vec::new()),
+        });
+        let made = Arc::clone(&relay);
+
+        let sent = sessions.forward(src, dst, b"hi", Instant::now(), &ctx, move || Some(made));
+
+        assert!(sent, "datagram forwarded");
+        let recorded = relay
+            .sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            *recorded,
+            vec![(b"hi".to_vec(), "1.1.1.1:53".to_string())],
+            "sent payload to the destination address"
+        );
         Ok(())
     }
 }

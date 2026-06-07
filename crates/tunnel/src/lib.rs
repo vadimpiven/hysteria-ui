@@ -197,21 +197,14 @@ async fn orchestrate(
             inbound = stack.udp_in.recv() => {
                 let Some(UdpInbound { src, dst, data }) = inbound else { break };
                 let client = Arc::clone(&client);
-                let session = sessions.get_or_create(src, Instant::now(), &recv_ctx, move || {
+                let len = u64::try_from(data.len()).unwrap_or(u64::MAX);
+                let sent = sessions.forward(src, dst, &data, Instant::now(), &recv_ctx, move || {
                     client.udp().ok().map(Arc::new)
                 });
-                match session {
-                    Some(conn) => {
-                        let len = u64::try_from(data.len()).unwrap_or(u64::MAX);
-                        if session::UdpRelay::send(&*conn, &data, &dst.to_string()) {
-                            counters.tx.fetch_add(len, Ordering::Relaxed);
-                        } else {
-                            counters.flow_errors.fetch_add(1, Ordering::Relaxed);
-                        }
-                    },
-                    None => {
-                        counters.flow_errors.fetch_add(1, Ordering::Relaxed);
-                    },
+                if sent {
+                    counters.tx.fetch_add(len, Ordering::Relaxed);
+                } else {
+                    counters.flow_errors.fetch_add(1, Ordering::Relaxed);
                 }
             },
             _ = gc.tick() => sessions.reap_idle(Instant::now(), UDP_IDLE),
@@ -229,7 +222,9 @@ async fn orchestrate(
 }
 
 /// Splice one app TCP flow to a Hysteria tunnel to its original destination,
-/// counting bytes crossing the hysteria seam.
+/// counting bytes crossing the hysteria seam. This is Go's `tun.NewConnection`
+/// (`app/internal/tun/server.go`): open `HyClient.TCP(reqAddr)` and copy both
+/// ways — its two `io.Copy` goroutines collapse into one `copy_bidirectional`.
 async fn relay_tcp(
     flow: TcpFlow,
     client: Arc<Client>,
