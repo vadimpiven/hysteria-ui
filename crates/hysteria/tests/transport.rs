@@ -1,7 +1,7 @@
 //! End-to-end conformance test for the Hysteria 2 client transport against the
 //! reference server (booted via the Node harness). Proves the whole path: QUIC
-//! dial + TLS cert pinning + HTTP/3 auth + relay, by echoing bytes through the
-//! tunnel to a local target server.
+//! dial + TLS (the self-signed cert trusted via the CA path) + HTTP/3 auth +
+//! relay, by echoing bytes through the tunnel to a local target server.
 
 mod common;
 
@@ -15,29 +15,23 @@ use hysteria::client::config::Config;
 use hysteria::client::config::TlsConfig;
 use hysteria::client::config::parse_port_union;
 use pretty_assertions::assert_eq;
+use rustls_pki_types::CertificateDer;
+use rustls_pki_types::pem::PemObject as _;
 use serde_json::json;
 use tokio::io::AsyncReadExt as _;
 use tokio::io::AsyncWriteExt as _;
 use tokio::net::TcpListener;
 use tokio::net::UdpSocket;
 
-/// Parse a colon-hex SHA-256 fingerprint (the `pinSHA256` link param).
-fn parse_pin(s: &str) -> Result<[u8; 32]> {
-    let bytes = s
-        .split(':')
-        .map(|h| u8::from_str_radix(h, 16))
-        .collect::<Result<Vec<u8>, _>>()
-        .context("invalid pin hex")?;
-    bytes.try_into().map_err(|_| anyhow!("pin is not 32 bytes"))
-}
-
-/// Build a client `Config` from the harness's reported server config.
+/// Build a client `Config` from the harness's reported server config, trusting
+/// the reference server's self-signed cert via the CA path.
 fn client_config(cfg: &common::HysteriaClientConfig) -> Result<Config> {
+    // Path is reported by our own test harness (trusted), not user input.
+    let pem = std::fs::read(&cfg.ca_cert_path).context("read reference server cert")?; // nosemgrep
+    let cert = CertificateDer::from_pem_slice(&pem).map_err(|e| anyhow!("parse cert: {e}"))?;
     let tls = TlsConfig {
         server_name: cfg.sni.clone(),
-        insecure: cfg.insecure,
-        pin_sha256: Some(parse_pin(&cfg.pin_sha256)?),
-        ca: None,
+        ca: Some(cert.as_ref().to_vec()),
     };
     Ok(Config::new(
         cfg.server.parse().context("server addr")?,

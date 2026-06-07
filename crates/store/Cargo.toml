@@ -1,0 +1,29 @@
+[package]
+name = "store"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# The plaintext, in-memory SecureStore used by dev binaries and tests. Gated off
+# by default so it can never link into a shipped binary.
+dev-stub = []
+
+[dependencies]
+profile = { path = "../profile" }
+# Random bytes seeding the v4 UUID (uuid's own RNG feature is off; see below).
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Derive Display/Error for StoreError + SecureStoreError.
+thiserror.workspace = true
+# Atomic metadata-doc writes (NamedTempFile + persist).
+tempfile.workspace = true
+# UUID type + RFC 4122 v4 formatting for profile ids.
+uuid.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+pretty_assertions.workspace = true

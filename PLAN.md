@@ -6,15 +6,16 @@ OS-integration shims (TUN provider, secure store) are platform-specific. Build o
 then Android/Android TV, Windows.
 
 Features (v1): add a profile (enter a `hysteria2://` link — type it, or scan its QR where there
-is a camera), share a profile (show its link with a Copy button plus a QR code), delete a
-profile, connect/disconnect a system-wide TUN.
+is a camera), rename a profile (its display name only), share a profile (show its link with a
+Copy button plus a QR code), delete a profile, connect/disconnect a system-wide TUN.
 
 Dependencies (pinned to exact versions at integration; enforced by `cargo-deny`):
 
 - `quinn` — QUIC (MIT/Apache-2.0); its public `congestion::Controller` trait carries Hysteria's
   Brutal congestion control. Fallback: `s2n-quic`.
 - `rustls` — TLS (Apache-2.0/ISC/MIT) with the `aws-lc-rs` provider (Apache/ISC); `ring` is the
-  named fallback.
+  named fallback. `rustls-platform-verifier` (MIT/Apache-2.0) verifies the server certificate
+  against the OS trust store (incl. Android via JNI).
 - `netstack-smoltcp` — userspace TUN netstack over `smoltcp` (MIT/Apache; smoltcp 0BSD): accepts
   flows from the TUN's IP packets and hands back async TCP streams + a UDP socket. Fallback: `ipstack`.
 - `tun-rs` — TUN device / fd wrapper (MIT/Apache-2.0). Fallback: raw fd + `wintun` crate.
@@ -30,12 +31,14 @@ The runtime tree is permissive (MIT / Apache-2.0 / 0BSD / ISC); `cargo-deny` kee
 
 ## 1. Principles
 
-- Minimal, granny-friendly. The entire UI is: add a link, share a link, delete a link, connect,
-  disconnect. Entering the link is the universal add path (typed text), so every platform —
-  including Android TV and any device with no camera — shares one interface; QR scanning is only
-  an optional shortcut where a camera exists. Sharing is a read-only view (the link with a Copy
-  button plus its QR), the one per-profile view. No settings screen, no rename, no editing: a
-  profile is its link (to change it, delete and re-add). Every setting that can have a default is
+- Minimal, granny-friendly. The entire UI is: add a link, rename a profile, share a link, delete
+  a link, connect, disconnect. Entering the link is the universal add path (typed text), so every
+  platform — including Android TV and any device with no camera — shares one interface; QR scanning
+  is only an optional shortcut where a camera exists. Sharing is a read-only view (the link with a
+  Copy button plus its QR), the one per-profile view. Renaming changes only the display name (the
+  link's `#fragment`), never the connection: no settings screen, and no editing the connection
+  itself — a profile is its link (to change the server/auth/obfs, delete and re-add). Every
+  setting that can have a default is
   defaulted and hidden (routing, autoconnect, launch-at-login, DNS, reconnect). A setting with no
   safe default is a design smell — re-derive it from the link or pick an opinionated default.
 - Security-first. When security trades against simplicity or smaller scope, take the secure
@@ -89,7 +92,7 @@ State flows one way: tunnel → OS → model observes → snapshot → UI (§4).
 | Obfuscation (Salamander/gecko) | wrapping Quinn `AsyncUdpSocket`                               |
 | Congestion control (Brutal)    | Quinn `congestion::Controller` impl                           |
 | QUIC transport                 | `quinn`                                                       |
-| TLS + cert pinning             | `rustls` + custom `ServerCertVerifier`                        |
+| TLS + cert verification        | `rustls` + `rustls-platform-verifier` (OS trust store)        |
 | Userspace netstack             | `netstack-smoltcp` (over `smoltcp`)                           |
 | TUN device / fd                | `tun-rs`                                                      |
 | Async runtime / concurrency    | single-thread `tokio` + serialized actor                      |
@@ -215,9 +218,10 @@ versions (Rust, `cargo-ndk`, `cargo-deny`, CMake plus a C toolchain and NASM-on-
 nothing globally and run `mise run <task>`. Multi-step logic — per-target builds, the xcframework
 lipo, `csbindgen` generation into `bindings/`, packaging — lives in TypeScript under `scripts/`,
 run via Node; per-package steps go through pnpm scripts. A `mise run hysteria-server` task fetches
-the pinned reference server (rev `c3a806b`) under a checksum, generates the self-signed cert plus
-its `pinSHA256`, and runs it with known auth — first-class test infrastructure from the first
-commit, backing both the `socks5-bridge` conformance loop (§5) and the cert-pinning path (§7.3).
+the pinned reference server (rev `c3a806b`) under a checksum, generates a self-signed cert (which
+tests trust out of band, since the client verifies against the OS trust store), and runs it with
+known auth — first-class test infrastructure from the first commit, backing both the
+`socks5-bridge` conformance loop (§5) and the TLS verification path (§7.3).
 
 The dependency-wall and supply-chain gates (`cargo-deny`, the `cargo tree` wall assertion below,
 `[workspace.lints]`) are scaffolded in the first commit so the wall — a structural invariant —
@@ -270,26 +274,26 @@ profile, ffi-util}`, never `config` or `model`. Profiles are
 
 ```text
 hysteria-ui/
+  Cargo.toml               # cargo workspace (virtual manifest) at the repo root: [workspace] members + workspace.{dependencies,lints,package}; publish = false
   mise.toml                # single source of truth: pinned tool versions + tasks (setup/build/test/check/fix)
   package.json             # "type": "module"; pnpm scripts + devDeps
   scripts/                 # TypeScript build orchestration (run via Node): xcframework, cargo-ndk, csbindgen, packaging, wall check
-  core/                    # cargo workspace (virtual manifest)
-    Cargo.toml             # [workspace] members + workspace.{dependencies,lints,package}; publish = false
-    crates/
-      profile/             # pure serde data types; #![forbid(unsafe_code)]; deps: serde
-      config/              # hysteria2:// parse + validate -> profile::Profile; untrusted-input parser (app-only)
-      store/               # JSON doc + SecureStore trait DEFINED here; deps: profile
-      conn-error/          # connect-error enum; zero-dep leaf; crosses the app/ext wall
-      hysteria/            # Hysteria 2 client on Quinn (mods: transport, auth, proxy, frag, obfs, brutal); builds the client from &profile::Profile
-      tunnel/              # netstack-smoltcp (over smoltcp) + tun-rs fd; drives the hysteria client (ext-only)
-      model/               # the Model: async serialized actor; sole app-side facade; state + stats snapshots; intents (app-only)
-      ffi-util/            # handle table, catch_unwind export wrapper, buffer/JSON helpers, SecureStore C-callback adapter
-      ffi-app/             # cdylib+staticlib (symbols hyapp_*): extern "C" + csbindgen; deps: model, ffi-util
-      ffi-ext/             # cdylib+staticlib (symbols hyext_*): extern "C" + csbindgen; deps: tunnel, store, conn-error, profile, ffi-util
-      socks5-bridge/       # standalone SOCKS5 front-end over the hysteria client (also the protocol conformance harness); deps: hysteria, config; never linked into any ffi-* lib. The TUN front-end is a separate dev binary added with tunnel/ (step 2)
-    fuzz/                  # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
-    testdata/              # mise-managed: pinned reference Hysteria 2 server (rev c3a806b) + self-signed cert + computed pinSHA256 + known auth; the conformance fixture
-  bindings/                # generated + committed: C header + C# P/Invoke (csbindgen output); core/ produces, ui/ consumes
+  crates/
+    profile/               # pure serde data types; #![forbid(unsafe_code)]; deps: serde
+    config/                # hysteria2:// parse + validate -> profile::Profile; untrusted-input parser (app-only)
+    store/                 # JSON doc + SecureStore trait DEFINED here; deps: profile
+    conn-error/            # connect-error enum; leaf (only thiserror); crosses the app/ext wall
+    hysteria/              # Hysteria 2 client on Quinn (mods: transport, auth, proxy, frag, obfs, brutal); builds the client from &profile::Profile
+    tunnel/                # netstack-smoltcp (over smoltcp) + tun-rs fd; drives the hysteria client (ext-only)
+    tun-bridge/            # dev TUN-harness binary over tunnel/ (the socks5-bridge counterpart); never linked into any ffi-* lib
+    model/                 # the Model: async serialized actor; sole app-side facade; state + stats snapshots; intents (app-only)
+    ffi-util/              # handle table, catch_unwind export wrapper, buffer/JSON helpers, SecureStore C-callback adapter
+    ffi-app/               # cdylib+staticlib (symbols hyapp_*): extern "C" + csbindgen; deps: model, ffi-util
+    ffi-ext/               # cdylib+staticlib (symbols hyext_*): extern "C" + csbindgen; deps: tunnel, store, conn-error, profile, ffi-util
+    socks5-bridge/         # standalone SOCKS5 front-end over the hysteria client (also the protocol conformance harness); deps: hysteria, config; never linked into any ffi-* lib
+  fuzz/                    # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
+  testdata/                # mise-managed: pinned reference Hysteria 2 server (rev c3a806b) + self-signed cert (trusted out of band in tests) + known auth; the conformance fixture
+  bindings/                # generated + committed: C header + C# P/Invoke (csbindgen output); the workspace produces, ui/ consumes
   ui/                      # ONE Avalonia .NET solution: shared views + platform heads (P/Invoke the C ABI)
   apple/                   # Swift NE PacketTunnelProvider + Xcode packaging (app head + extension)
   android/                 # VpnService glue (in the .NET Android head) + packaging (later)
@@ -303,13 +307,26 @@ hysteria-ui/
   the URI parser, and `hysteria` (not `profile`) owns the `&Profile -> client config` builder, so
   `profile` stays a true leaf. `config/` parses and validates the `hysteria2://` URI (including
   port-hopping) into `profile::Profile`; it runs app-side at save time (§4), is app-only, and ships
-  a golden-corpus plus fuzz test (`cargo fuzz`).
-- `store/` — `store::Entry { id, name, created_at, link: profile::Profile }` (the stored record
-  holds a parsed profile, not a second `Profile`); add/delete/list only. `id` = UUID; dedup by
-  normalized URI; `name` from the link's `#fragment`, else host. Non-secret metadata → one JSON
-  doc written atomically to a platform container path; secret → `SecureStore`. The `SecureStore`
-  trait is defined here (native-implemented, passed in at construction; §3.5); the extension uses
-  a read-only view. No SQLite: a tiny ordered list needs no SQL engine.
+  a golden-corpus plus fuzz test (`cargo fuzz`). The link's `#fragment` is read as the display name
+  (`name_from_uri`) on import and re-emitted on share (`to_uri_with_name`) — a client naming
+  convention the Go reference ignores; the name is non-secret metadata, not connection data, so it
+  stays out of `profile::Profile` and lives in `store`.
+- `store/` — `store::Entry { id, name, created_at }` is secret-free metadata: it is what the JSON
+  doc persists and what `model` puts in (secret-free) snapshots. The link itself — a
+  `profile::Profile` — lives only in `SecureStore` and is read on demand via `load(id)` (the
+  connect path and the share view), never held in the metadata or a snapshot. API: `add` (consumes
+  a `profile::Profile`, writing the secret to `SecureStore` and the metadata to the doc), `rename`
+  (changes the display name only — a metadata-doc rewrite that leaves the secret untouched, since
+  the connection has not changed; on share the new name reappears as the link's `#fragment`),
+  `delete`, `list` (metadata), `load` (the secret). `id` = UUID; dedup by config-normalized
+  profile equality (the caller hands `store` an already-parsed, normalized `profile::Profile`,
+  since `store` does not link the URI parser); `name` is supplied by the caller (from the link's
+  `#fragment`), else
+  `store` derives it from the host. Non-secret metadata → one schema-versioned JSON doc written
+  atomically (temp + rename) to a platform container path; secret → `SecureStore`. The `SecureStore`
+  trait is defined here (native-implemented, passed in at construction; §3.5); the extension calls
+  only `get`. The dev plaintext stub is feature-gated (`dev-stub`) and never shipped. No SQLite: a
+  tiny ordered list needs no SQL engine.
 - `hysteria/` — the Hysteria 2 client (§6, step 1); owns the `&profile::Profile -> client config`
   builder. On Quinn: the HTTP/3 auth handshake (`h3`/`h3-quinn`), TCP relay over Quinn bidi streams
   and UDP relay over QUIC datagrams with fragmentation, Brutal congestion control as a Quinn
@@ -337,8 +354,9 @@ hysteria-ui/
   `ffi-*` lib. The SOCKS5 protocol itself is delegated to `fast-socks5`. The TUN front-end (the
   `tunnel` netstack over a root-opened utun on macOS) is a separate dev binary added alongside
   `tunnel/` in step 2. Tested against the mise-managed local server (below).
-- `conn-error/` — a dependency-free leaf owning the connect-error enum (`AuthFailed |
-ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
+- `conn-error/` — a leaf owning the connect-error enum (`thiserror`-derived; `AuthFailed |
+ServerUnreachable | Timeout | Unknown`; a rejected certificate folds into `ServerUnreachable`,
+  since the QUIC layer does not surface it separately). Produced in the extension (which must
   not link `model`) and relayed up; both `tunnel`/`hysteria` and `model` depend on it, neither on
   the other.
 - `model/` — the serialized Model (the Model of Model–View) and the sole app-side facade. Depends
@@ -346,10 +364,13 @@ ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extens
   through the OS, §4).
   - State: `Vec<store::Entry>`, `selected_id`, OS-derived `ConnectionState` (owned here),
       `last_error` (a `conn-error` value).
-  - Intents: `AddProfileFromURI`, `DeleteProfile`, `SelectProfile`, `Connect`, `Disconnect`.
+  - Intents: `AddProfileFromURI`, `RenameProfile`, `DeleteProfile`, `SelectProfile`, `Connect`,
+      `Disconnect`. `RenameProfile` is a `store::rename` (metadata-only; §5 `store/`): it updates
+      the display name in a snapshot without touching the stored link.
   - One on-demand query `export_profile_uri(id) -> Vec<u8>` for the share view: reads the link
-      from `SecureStore` only when the user opens share, returns it as bytes, and never places the
-      URI in any state snapshot (snapshots stay secret-free; §7).
+      from `SecureStore` only when the user opens share, re-encodes it with the display name as the
+      `#fragment` (`config::to_uri_with_name`), returns it as bytes, and never places the URI in any
+      state snapshot (snapshots stay secret-free; §7).
   - Two output channels, never merged: discrete state snapshots, and throttled stats.
   - `last_error` maps to one actionable UI sentence, no diagnostics screen.
 - `ffi-util/` plus `ffi-app/` plus `ffi-ext/` — the binding boundary; the only crates that produce
@@ -382,7 +403,7 @@ sandboxed NE before any OS/FFI/UI investment is built on top of it. The protocol
 through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise-managed local server
 (§3.8); FFI and UI come once the core is proven.
 
-0. Workspace plus guardrails — `core/` virtual manifest with empty crate skeletons,
+0. Workspace plus guardrails — the repo-root `Cargo.toml` virtual manifest with empty crate skeletons,
    `[workspace.dependencies]`/`[workspace.lints]` (`unsafe_code = "forbid"` except `ffi-*`),
    `mise.toml` pinned toolchain, and the supply-chain/wall gates (`cargo-deny` plus the `cargo tree`
    wall assertion, §3.8) wired in CI from the first commit. Enroll in the paid Apple Developer
@@ -394,8 +415,8 @@ through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise
    hopping), driven off a `profile::Profile`. `socks5-bridge` exposes the client as a local SOCKS5
    proxy: TCP `CONNECT` first, then UDP `ASSOCIATE` (SOCKS5 exercises the UDP/datagram relay,
    the riskiest path). Conformance against the mise-managed pinned reference server (rev `c3a806b`):
-   `curl` over TCP and `dig` over UDP, with and without obfs, plus the `pinSHA256` cert-pin path
-   (§7.3).
+   `curl` over TCP and `dig` over UDP, with and without obfs, trusting the server's self-signed cert
+   out of band (the `--ca` path; §7.3).
 2. Userspace TUN, standalone — `tunnel/` (netstack-smoltcp plus tun-rs), exercised by its own dev
    TUN-harness binary (the counterpart to `socks5-bridge`): on macOS open a utun via raw fd as root
    — no NE, no FFI — feed packets through the netstack into the proven `hysteria` client. Validates
@@ -406,11 +427,12 @@ through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise
    works (the full `csbindgen` C# binding comes at step 5). Sanity-check RSS here; the concurrency
    cap is sized against a real low-RAM Android TV box at fan-out (§3.3). Must pass before the
    fan-out (step 8) is committed. Needs the capability from step 0; runs in parallel with step 4.
-4. Config plus store (mock secrets) — `config` parser (→ `profile::Profile`) with `cargo fuzz` plus
-   golden corpus; `store` over a container path with the `SecureStore` trait plus a dev-stub impl.
-   Off the protocol critical path (shares only the `profile/` leaf) — parallelizable with steps 2–3.
+4. Config plus store (mock secrets) — `config` parser (→ `profile::Profile`, plus `#fragment`
+   name read/emit) with `cargo fuzz` plus golden corpus; `store` over a container path with the
+   `SecureStore` trait plus a dev-stub impl (`add`/`rename`/`delete`/`list`/`load`). Off the
+   protocol critical path (shares only the `profile/` leaf) — parallelizable with steps 2–3.
 5. Model plus macOS UI (mocked tunnel) — `model` plus `ffi-app` plus `csbindgen`; the Avalonia
-   desktop View (list / add / share (link + Copy + QR) / delete / select / connect) over P/Invoke
+   desktop View (list / add / rename / share (link + Copy + QR) / delete / select / connect) over P/Invoke
    (§1), against a mocked tunnel. First real exercise of the Model–View contract: snapshots/intents,
    observer callbacks, Avalonia `Dispatcher.UIThread` marshaling. This View fans out to every
    platform (step 8).
@@ -432,19 +454,20 @@ through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise
 
 Asset: the stored links (server plus auth, bearer credentials). Mitigations: local malware → OS
 sandbox plus native secure store; locked-device theft → Keychain accessibility plus file
-data-protection; network MITM → TLS pinning; supply chain → pinned crates plus signed builds;
-implementation bugs → memory-safe Rust plus conformance/fuzz testing.
+data-protection; network MITM → TLS verified against the OS trust store; supply chain → pinned
+crates plus signed builds; implementation bugs → memory-safe Rust plus conformance/fuzz testing.
 
 1. At rest — links only in the secure store (§3.5); the JSON doc holds no auth and uses
    `NSFileProtectionCompleteUntilFirstUserAuthentication` on Apple.
 2. In memory — secrets cross the boundary as byte buffers (not C strings), zeroized after a
    connect via `zeroize`.
-3. Transport — the link carries only `sni`, `insecure`, `pinSHA256` (auth in userinfo); a custom
-   CA is config-file-only, so `pinSHA256` is the only secure path for self-signed servers via a
-   link. Pin the end-entity cert (a rustls custom `ServerCertVerifier`) even when `insecure=1`:
-    - accept `insecure=1` only with a `pinSHA256` (cert pinning, stronger than CA trust);
-    - reject `insecure=1` without a pin;
-    - accept plain CA-verified links.
+3. Transport — the link carries only `sni` (auth in userinfo). The server certificate is verified
+   against the OS trust store via `rustls-platform-verifier`; there is no `insecure` bypass and no
+   `pinSHA256` in links, so a server must present a publicly-trusted (e.g. ACME) certificate. The
+   trade-off: self-signed servers are unsupported from the GUI; the `socks5-bridge` dev tool keeps a
+   `--ca` flag to trust a private CA out of band (also how the conformance tests reach the
+   self-signed reference server). A rejected certificate is reported as `ServerUnreachable` (the
+   QUIC layer folds the TLS alert into a generic handshake failure).
 4. Explicit import and share — a `hysteria2://` deep link or clipboard never auto-saves; adding
    always needs confirmation. Sharing is user-initiated only: no background clipboard writes; an
    explicit Copy in the share view tags the clipboard item with each platform's free, set-once
@@ -478,6 +501,10 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
   `ring` is the named fallback. The macOS NE de-risk (step 3) verifies `aws-lc-rs` builds and runs
   in the sandboxed extension, and is the only point where we would reverse to `ring`. Build prereqs
   (C toolchain, CMake, NASM on Windows) are pinned in `mise.toml` (§3.8).
+- Server-cert trust — committed to the OS trust store via `rustls-platform-verifier` (§7.3): no
+  cert pinning, no `insecure` bypass. The macOS NE de-risk (step 3) must confirm it verifies inside
+  the sandboxed extension (it calls Security.framework); the same gate covers Android's JNI path at
+  fan-out (step 8).
 - Apple Network-Extension entitlement — a paid Apple Developer account suffices for the macOS NE
   (build, test, and Developer-ID notarization, §3.6); enable the Network Extensions capability
   before the macOS NE de-risk (step 3).

@@ -1,6 +1,6 @@
 //! The Hysteria 2 client connection. Port of `core/client/client.go`.
 //!
-//! Flow: dial QUIC (TLS 1.3 + cert pinning, ALPN `h3`), run the HTTP/3 auth
+//! Flow: dial QUIC (TLS 1.3, ALPN `h3`), run the HTTP/3 auth
 //! handshake (`POST https://hysteria/auth`), then use the *same* QUIC connection
 //! raw — bidi streams for the TCP relay, datagrams for the UDP relay — exactly as
 //! the Go client does.
@@ -19,8 +19,6 @@ use std::net::Ipv6Addr;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
 
@@ -114,11 +112,7 @@ impl Client {
             .server_addr
             .set_ip(config.server_addr.ip().to_canonical());
 
-        // The pinned verifier flips this on a hash mismatch, letting a failed
-        // handshake below be reported as a pin mismatch rather than unreachable.
-        let pin_rejected = Arc::new(AtomicBool::new(false));
-        let client_config =
-            build_quic_client_config(&config, &pin_rejected).map_err(ConnectFailure::Config)?;
+        let client_config = build_quic_client_config(&config).map_err(ConnectFailure::Config)?;
         let bind: SocketAddr = if config.server_addr.is_ipv4() {
             (Ipv4Addr::UNSPECIFIED, 0).into()
         } else {
@@ -130,7 +124,7 @@ impl Client {
             .connect_with(client_config, config.server_addr, &config.tls.server_name)
             .map_err(|e| ConnectFailure::Unreachable(anyhow::Error::new(e)))?
             .await
-            .map_err(|e| categorize_handshake(e, &pin_rejected))?;
+            .map_err(categorize_handshake)?;
 
         let info = authenticate(&conn, &config)
             .await
@@ -315,13 +309,12 @@ fn effective_tx(rx_auto: bool, server_rx: u64, client_tx: u64) -> u64 {
     }
 }
 
-/// Categorize a QUIC handshake failure. A set `pin_rejected` flag means our
-/// pinned verifier turned the certificate away; otherwise an idle timeout is told
-/// apart from a generic unreachable/closed connection.
-fn categorize_handshake(err: quinn::ConnectionError, pin_rejected: &AtomicBool) -> ConnectFailure {
-    if pin_rejected.load(Ordering::Relaxed) {
-        ConnectFailure::PinMismatch(anyhow::Error::new(err))
-    } else if matches!(err, quinn::ConnectionError::TimedOut) {
+/// Categorize a QUIC handshake failure: an idle timeout is told apart from a
+/// generic unreachable/closed connection. A rejected server certificate also
+/// lands here as `Unreachable` — rustls flattens the reason into a TLS alert,
+/// so the cause is not separable from other handshake failures.
+fn categorize_handshake(err: quinn::ConnectionError) -> ConnectFailure {
+    if matches!(err, quinn::ConnectionError::TimedOut) {
         ConnectFailure::Timeout(anyhow::Error::new(err))
     } else {
         ConnectFailure::Unreachable(anyhow::Error::new(err))
@@ -338,13 +331,10 @@ fn categorize_auth(err: anyhow::Error) -> ConnectFailure {
     }
 }
 
-/// Build the quinn client config: rustls (pinning) + transport tunables +
-/// congestion controller (Brutal from the configured TX, else BBR).
-fn build_quic_client_config(
-    config: &Config,
-    pin_rejected: &Arc<AtomicBool>,
-) -> Result<quinn::ClientConfig> {
-    let rustls_config = build_rustls_client_config(&config.tls, pin_rejected)?;
+/// Build the quinn client config: rustls (TLS 1.3 + ALPN h3) + transport
+/// tunables + congestion controller (Brutal from the configured TX, else BBR).
+fn build_quic_client_config(config: &Config) -> Result<quinn::ClientConfig> {
+    let rustls_config = build_rustls_client_config(&config.tls)?;
     let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(rustls_config)
         .map_err(|e| anyhow!("QUIC TLS config: {e}"))?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(quic_crypto));

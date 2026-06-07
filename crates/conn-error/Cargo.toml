@@ -7,6 +7,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+# Derive Display/Error for the connect-error enum.
+thiserror.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

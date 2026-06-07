@@ -165,10 +165,6 @@ impl Config {
                 reason: format!("no address for {host}"),
             })?;
 
-        let pin_sha256 = match &p.tls.pin_sha256 {
-            Some(pin) => Some(parse_pin(pin)?),
-            None => None,
-        };
         let obfs = match &p.obfs {
             None => None,
             Some(o) if o.obfs_type.eq_ignore_ascii_case("salamander") => {
@@ -192,8 +188,6 @@ impl Config {
             p.auth.clone(),
             TlsConfig {
                 server_name,
-                insecure: p.tls.insecure,
-                pin_sha256,
                 ca: None,
             },
         );
@@ -235,29 +229,6 @@ fn primary_port(spec: &str) -> Result<u16, ConfigError> {
             field: "server".into(),
             reason: "invalid port".into(),
         })
-}
-
-/// Normalize (lowercase, strip `:`/`-`) and decode a hex SHA-256 cert pin.
-fn parse_pin(pin: &str) -> Result<[u8; 32], ConfigError> {
-    let hex: String = pin
-        .chars()
-        .filter(|c| !matches!(c, ':' | '-'))
-        .collect::<String>()
-        .to_lowercase();
-    if hex.len() != 64 {
-        return Err(ConfigError {
-            field: "pinSHA256".into(),
-            reason: "must be a 64-character hex SHA-256".into(),
-        });
-    }
-    let mut out = [0u8; 32];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| ConfigError {
-            field: "pinSHA256".into(),
-            reason: "invalid hex".into(),
-        })?;
-    }
-    Ok(out)
 }
 
 /// Port-hop interval range. Port of udphop's `HopIntervalConfig`.
@@ -317,19 +288,15 @@ fn fill_window(value: &mut u64, default: u64, field: &str) -> Result<(), ConfigE
     Ok(())
 }
 
-/// TLS settings, expressed as a `hysteria2://` link carries them: an SNI, the
-/// `insecure` flag, an optional cert pin, and an optional custom CA (DER).
+/// TLS settings for the client connection.
 #[derive(Debug, Clone, Default)]
 pub struct TlsConfig {
     /// TLS server name (SNI).
     pub server_name: String,
-    /// Skip CA verification. Must be combined with `pin_sha256`: an `insecure`
-    /// config without a pin is rejected at connect time, not silently ignored —
-    /// pinning the end-entity cert is stronger than CA trust.
-    pub insecure: bool,
-    /// SHA-256 of the server's end-entity certificate (the `pinSHA256` param).
-    pub pin_sha256: Option<[u8; 32]>,
-    /// Custom CA certificate (DER) for the CA-trust path.
+    /// A specific CA certificate (DER) to trust instead of the OS trust store.
+    /// Links never set this (it is not link-carryable); it exists for trusting a
+    /// private CA out of band — used by the conformance tests to reach the
+    /// self-signed reference server. `None` ⇒ verify against the OS trust store.
     pub ca: Option<Vec<u8>>,
 }
 
@@ -470,15 +437,11 @@ mod tests {
 
     #[test]
     fn from_profile_maps_connection_fields() -> anyhow::Result<()> {
-        let pin_hex = "ab".repeat(32); // 64 hex chars ⇒ [0xab; 32]
         let p = profile::Profile {
             server: "127.0.0.1:8443".into(),
             auth: "secret".into(),
             tls: profile::Tls {
                 sni: "example.com".into(),
-                insecure: true,
-                pin_sha256: Some(pin_hex),
-                ca: None,
             },
             obfs: Some(profile::Obfs {
                 obfs_type: "salamander".into(),
@@ -490,8 +453,7 @@ mod tests {
         assert_eq!(c.server_addr, "127.0.0.1:8443".parse()?, "server addr");
         assert_eq!(c.auth, "secret", "auth");
         assert_eq!(c.tls.server_name, "example.com", "sni");
-        assert!(c.tls.insecure, "insecure");
-        assert_eq!(c.tls.pin_sha256, Some([0xab; 32]), "decoded pin");
+        assert!(c.tls.ca.is_none(), "links carry no CA");
         assert_eq!(c.obfs, Some(b"pw".to_vec()), "obfs psk");
         assert!(c.fast_open, "fast open");
         assert!(c.hop_ports.is_none(), "single port ⇒ no hopping");

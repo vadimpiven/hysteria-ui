@@ -5,6 +5,7 @@ members = [
     "crates/hysteria",
     "crates/profile",
     "crates/socks5-bridge",
+    "crates/store",
     "crates/tun-bridge",
     "crates/tunnel",
 ]
@@ -102,8 +103,10 @@ h3-quinn = "0.0.10"
 http = "1.4.1"
 percent-encoding = "2.3.2"
 pretty_assertions = "1.4.1"
-# QUIC transport. aws-lc-rs is the committed crypto provider (PLAN §8); we drive
-# our own cert pinning, so `platform-verifier` is left off.
+# QUIC transport. aws-lc-rs is the chosen crypto provider. We install our own
+# rustls verifier for pinSHA256 end-entity pinning, so quinn's built-in
+# `platform-verifier` feature stays off (it would replace our verifier). System-
+# root trust for plain-CA links is the verifier's job (see hysteria/client/tls.rs).
 quinn = { version = "0.11.9", default-features = false, features = [
     "runtime-tokio",
     "rustls-aws-lc-rs",
@@ -115,9 +118,19 @@ rand = "0.9.4"
 # tls12) dropped since QUIC never uses them.
 rustls = { version = "0.23.40", default-features = false, features = ["aws-lc-rs", "std"] }
 rustls-pki-types = "1.14.1"
+# Server-cert verification via the OS trust store (system roots, native chain
+# validation incl. Android via JNI). We install it into our own rustls config to
+# keep ALPN h3 + TLS 1.3, so quinn's built-in `platform-verifier` feature is off.
+rustls-platform-verifier = "0.7.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-sha2 = "0.10.9"
+# Derive `Error`/`Display` for the error types across the workspace.
+thiserror = "2.0.18"
+# Atomic file writes (temp + rename) and self-cleaning temp dirs in tests.
+tempfile = "3.27.0"
+# UUID type + RFC 4122 formatting for profile ids (`v4` feature off; we seed the
+# bytes from `rand`, already in the tree, to avoid a third `getrandom`).
+uuid = "1.23.2"
 # Userspace TCP/IP netstack over smoltcp for the TUN front-end (tunnel crate):
 # wraps smoltcp and hands back accepted TCP streams + a UDP socket, so we don't
 # hand-roll packet parsing / socket lifecycle / NAT.

@@ -5,56 +5,30 @@
 //! (no server address or other secret travels with it) that the app turns into
 //! one actionable sentence; the attached cause is for diagnostics only.
 
-use std::error::Error;
-use std::fmt;
-
 use conn_error::ConnError;
 
-/// Why a connection attempt failed, with the underlying cause attached.
-#[derive(Debug)]
+/// Why a connection attempt failed, with the underlying cause attached. The
+/// `{0:#}` in each message renders the cause's full chain inline; the type
+/// exposes no `source` (anyhow's `Error` is not a `std::error::Error`), so the
+/// whole story lives in the message.
+#[derive(Debug, thiserror::Error)]
 pub enum ConnectFailure {
     /// The profile was unusable (normally rejected when the link is saved).
+    #[error("invalid configuration: {0:#}")]
     Config(anyhow::Error),
     /// The server could not be reached, or the handshake failed short of a
-    /// timeout or a pin mismatch (refused, no route, reset, protocol error).
+    /// timeout (refused, no route, reset, untrusted certificate, protocol
+    /// error). A rejected certificate is not separable here — the QUIC layer
+    /// flattens the reason into a TLS alert.
+    #[error("server unreachable: {0:#}")]
     Unreachable(anyhow::Error),
     /// The QUIC handshake timed out.
+    #[error("connection timed out: {0:#}")]
     Timeout(anyhow::Error),
-    /// The server's certificate did not match the link's pinned `pinSHA256`.
-    PinMismatch(anyhow::Error),
     /// The server rejected our credentials.
+    #[error("authentication failed: {0:#}")]
     Auth(anyhow::Error),
 }
-
-impl ConnectFailure {
-    /// The underlying cause, for diagnostics.
-    fn cause(&self) -> &anyhow::Error {
-        match self {
-            Self::Config(e)
-            | Self::Unreachable(e)
-            | Self::Timeout(e)
-            | Self::PinMismatch(e)
-            | Self::Auth(e) => e,
-        }
-    }
-}
-
-impl fmt::Display for ConnectFailure {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let label = match self {
-            Self::Config(_) => "invalid configuration",
-            Self::Unreachable(_) => "server unreachable",
-            Self::Timeout(_) => "connection timed out",
-            Self::PinMismatch(_) => "server certificate pin mismatch",
-            Self::Auth(_) => "authentication failed",
-        };
-        // `{:#}` renders the cause's full chain inline (this type exposes no
-        // `source`, so the whole story lives in the message).
-        write!(f, "{label}: {:#}", self.cause())
-    }
-}
-
-impl Error for ConnectFailure {}
 
 /// Map a failure to its secret-free wire category for the app/extension wall.
 impl From<&ConnectFailure> for ConnError {
@@ -63,7 +37,6 @@ impl From<&ConnectFailure> for ConnError {
             ConnectFailure::Config(_) => ConnError::Unknown,
             ConnectFailure::Unreachable(_) => ConnError::ServerUnreachable,
             ConnectFailure::Timeout(_) => ConnError::Timeout,
-            ConnectFailure::PinMismatch(_) => ConnError::TlsPinMismatch,
             ConnectFailure::Auth(_) => ConnError::AuthFailed,
         }
     }
@@ -85,10 +58,6 @@ mod tests {
                 ConnError::ServerUnreachable,
             ),
             (ConnectFailure::Timeout(anyhow!("x")), ConnError::Timeout),
-            (
-                ConnectFailure::PinMismatch(anyhow!("x")),
-                ConnError::TlsPinMismatch,
-            ),
             (ConnectFailure::Auth(anyhow!("x")), ConnError::AuthFailed),
         ];
         for (failure, expected) in &cases {

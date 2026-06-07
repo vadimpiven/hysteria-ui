@@ -49,22 +49,15 @@ impl fmt::Debug for Profile {
 }
 
 /// TLS settings as a `hysteria2://` link carries them.
+///
+/// Only the server name: the certificate is verified against the OS trust store,
+/// so a link carries no pin or CA, and the server must present a publicly-trusted
+/// (e.g. ACME) certificate.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tls {
     /// TLS server name (SNI); empty means "derive from the server host".
     #[serde(default)]
     pub sni: String,
-    /// Skip CA verification. Must be paired with a pin: the client rejects an
-    /// `insecure` profile that has no `pin_sha256` rather than connecting blind.
-    #[serde(default)]
-    pub insecure: bool,
-    /// SHA-256 of the server's end-entity certificate (the `pinSHA256` param),
-    /// as hex (separators and case are normalized downstream).
-    #[serde(default, rename = "pinSHA256", skip_serializing_if = "Option::is_none")]
-    pub pin_sha256: Option<String>,
-    /// Custom CA certificate (a config-file path/PEM); a link cannot carry it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ca: Option<String>,
 }
 
 /// Obfuscation settings. The reference defines `salamander` and `gecko`; only
@@ -100,9 +93,6 @@ mod tests {
             auth: "secret".into(),
             tls: Tls {
                 sni: "real.example.com".into(),
-                insecure: true,
-                pin_sha256: Some("deadbeef".into()),
-                ca: None,
             },
             obfs: Some(Obfs {
                 obfs_type: "salamander".into(),
