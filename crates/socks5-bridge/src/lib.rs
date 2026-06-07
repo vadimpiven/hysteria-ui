@@ -78,7 +78,12 @@ pub async fn run(cli: Cli) -> Result<()> {
     let listener = TcpListener::bind(listen)
         .await
         .context("bind SOCKS5 listener")?;
-    eprintln!("SOCKS5 listening on {}", listener.local_addr()?);
+    eprintln!(
+        "SOCKS5 listening on {}",
+        listener
+            .local_addr()
+            .context("SOCKS5 listener local address")?
+    );
     serve(listener, Arc::new(client)).await
 }
 

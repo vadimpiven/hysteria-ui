@@ -67,9 +67,15 @@ pub(crate) struct UdpOutbound {
 }
 
 /// Buffer/flow caps. The `*_buffer` values are channel depths bounding queued
-/// packets/datagrams; the `max_*` values cap concurrent flows. Each live TCP flow
-/// holds the netstack's per-socket buffers, so `max_tcp_flows` is the lever that
-/// bounds worst-case memory on low-RAM targets.
+/// packets/datagrams; the `max_*` values cap concurrent flows.
+///
+/// Caveat on TCP memory: `max_tcp_flows` caps live *relays* (and the hysteria-side
+/// resources they hold), not the netstack's per-socket buffers. `netstack-smoltcp`
+/// allocates a fixed per-connection buffer set on the first SYN, before our accept
+/// loop sees the flow, and its accept backlog is unbounded — so a local app
+/// spraying SYNs can transiently allocate beyond this cap until we drain and close
+/// the excess. Bounding that needs an upstream knob (a bounded backlog /
+/// configurable buffer size); acceptable on the current desktop/Android targets.
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Stack↔TUN packet channel depth.
@@ -233,8 +239,9 @@ pub fn spawn(device: Arc<AsyncDevice>, client: Arc<Client>, config: Config) -> R
     })
 }
 
-/// Run the netstack until the device errors or the netstack ends. The blocking
-/// convenience used by the `tun-bridge` dev harness; production uses [`spawn`].
+/// Spawn the netstack and await it to completion (the device erroring or the
+/// netstack ending). A convenience for callers that don't need the [`Handle`];
+/// callers that want live stats or graceful shutdown use [`spawn`].
 pub async fn run(device: Arc<AsyncDevice>, client: Arc<Client>, config: Config) -> Result<()> {
     spawn(device, client, config)?.join().await?;
     Ok(())
@@ -298,6 +305,8 @@ async fn orchestrate(ns: Netstack) {
     // TUN → stack: read IP packets off the device and feed the netstack.
     {
         let device = Arc::clone(&device);
+        // Floor the read buffer at a standard frame so a small configured MTU
+        // can't truncate an inbound packet.
         let mtu = config.mtu.max(1500);
         infra.spawn(async move {
             let mut buf = vec![0u8; mtu];
@@ -334,6 +343,13 @@ async fn orchestrate(ns: Netstack) {
     // remote the app addressed.
     infra.spawn(async move {
         while let Some(out) = udp_out_rx.recv().await {
+            // Spoofing the source needs `from` and `src` in the same address
+            // family; a mismatched pair (not reachable in practice — a session's
+            // replies share the app's family) would make the netstack reject the
+            // send and, via `infra.join_next`, tear the tunnel down. Skip it.
+            if out.from.is_ipv4() != out.src.is_ipv4() {
+                continue;
+            }
             if udp_wr.send((out.data, out.from, out.src)).await.is_err() {
                 break;
             }
