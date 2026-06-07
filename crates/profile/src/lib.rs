@@ -9,11 +9,16 @@
 //! plus `fast_open`. Bandwidth and QUIC tuning are not link-carryable (they are
 //! config-file-only in the reference), so they are not modeled here.
 
+use std::fmt;
+
 use serde::Deserialize;
 use serde::Serialize;
 
 /// A Hysteria 2 connection profile.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Debug` is hand-written to redact the bearer credential: a stray `{:?}` (a
+/// log line, a panic message) must never leak `auth`.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     /// Server address: `host`, `host:port`, or `host:port-range[,port…]` — the
     /// trailing port spec (a range or list) selects port hopping.
@@ -29,6 +34,18 @@ pub struct Profile {
     /// Send the proxy request without waiting for the server's response.
     #[serde(default)]
     pub fast_open: bool,
+}
+
+impl fmt::Debug for Profile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Profile")
+            .field("server", &self.server)
+            .field("auth", &"<redacted>")
+            .field("tls", &self.tls)
+            .field("obfs", &self.obfs)
+            .field("fast_open", &self.fast_open)
+            .finish()
+    }
 }
 
 /// TLS settings as a `hysteria2://` link carries them.
@@ -52,12 +69,22 @@ pub struct Tls {
 
 /// Obfuscation settings. The reference defines `salamander` and `gecko`; only
 /// `salamander` is implemented in this client.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Obfs {
     /// Obfuscation type (e.g. `salamander`).
     #[serde(rename = "type")]
     pub obfs_type: String,
     pub password: String,
+}
+
+impl fmt::Debug for Obfs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `password` is the obfuscation pre-shared key — redact it.
+        f.debug_struct("Obfs")
+            .field("obfs_type", &self.obfs_type)
+            .field("password", &"<redacted>")
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -87,6 +114,32 @@ mod tests {
         let back: Profile = serde_json::from_str(&json)?;
         assert_eq!(back, profile, "Profile round-trips through JSON");
         Ok(())
+    }
+
+    #[test]
+    fn debug_redacts_secrets() {
+        let profile = Profile {
+            server: "example.com:443".into(),
+            auth: "super-secret-token".into(),
+            obfs: Some(Obfs {
+                obfs_type: "salamander".into(),
+                password: "psk-secret".into(),
+            }),
+            ..Profile::default()
+        };
+        let rendered = format!("{profile:?}");
+        assert!(
+            !rendered.contains("super-secret-token"),
+            "Debug must not leak the auth credential: {rendered}"
+        );
+        assert!(
+            !rendered.contains("psk-secret"),
+            "Debug must not leak the obfs PSK: {rendered}"
+        );
+        assert!(
+            rendered.contains("example.com:443"),
+            "non-secret fields still render: {rendered}"
+        );
     }
 
     #[test]

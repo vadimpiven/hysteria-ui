@@ -3,7 +3,7 @@
 Native Hysteria 2 client apps over a shared Rust core (the app Model plus the Hysteria client —
 all state, logic, and protocol) and a single shared .NET/Avalonia View (the UI). Only the thin
 OS-integration shims (TUN provider, secure store) are platform-specific. Build order: macOS,
-then iOS/iPadOS, Android/Android TV, Windows.
+then Android/Android TV, Windows.
 
 Features (v1): add a profile (enter a `hysteria2://` link — type it, or scan its QR where there
 is a camera), share a profile (show its link with a Copy button plus a QR code), delete a
@@ -15,7 +15,8 @@ Dependencies (pinned to exact versions at integration; enforced by `cargo-deny`)
   Brutal congestion control. Fallback: `s2n-quic`.
 - `rustls` — TLS (Apache-2.0/ISC/MIT) with the `aws-lc-rs` provider (Apache/ISC); `ring` is the
   named fallback.
-- `smoltcp` — userspace netstack (0BSD). Fallback: `ipstack`.
+- `netstack-smoltcp` — userspace TUN netstack over `smoltcp` (MIT/Apache; smoltcp 0BSD): accepts
+  flows from the TUN's IP packets and hands back async TCP streams + a UDP socket. Fallback: `ipstack`.
 - `tun-rs` — TUN device / fd wrapper (MIT/Apache-2.0). Fallback: raw fd + `wintun` crate.
 - `h3` + `h3-quinn` — HTTP/3 auth handshake. `tokio` — async runtime (MIT).
 - `csbindgen` — generates the Rust `extern "C"` plus C# P/Invoke bindings. Alternative:
@@ -54,13 +55,13 @@ The runtime tree is permissive (MIT / Apache-2.0 / 0BSD / ISC); `cargo-deny` kee
      store/       JSON doc + SecureStore (secrets)
      conn-error/  connect-error enum (leaf)
      hysteria/    Hysteria 2 client on Quinn: auth + TCP + UDP + Brutal
-     tunnel/      smoltcp netstack + tun-rs fd; drives hysteria/
+     tunnel/      netstack-smoltcp (over smoltcp) + tun-rs fd; drives hysteria/
      model/       the Model: async actor — snapshots + intents
    ffi-app/  ffi-ext/  ffi-util/   extern "C" + csbindgen (flat: JSON + cb)
                           │  staticlib / cdylib  — ONE C ABI, every target
                           ▼  P/Invoke
               Single .NET / Avalonia View — shared by ALL platforms
-              (macOS · iOS/iPadOS · Android(+TV) · Windows)
+              (macOS · Android(+TV) · Windows)
 
    Platform-native shims (each in its own language, behind the core):
      Apple → Swift NE PacketTunnelProvider      Android → VpnService
@@ -89,7 +90,7 @@ State flows one way: tunnel → OS → model observes → snapshot → UI (§4).
 | Congestion control (Brutal)    | Quinn `congestion::Controller` impl                           |
 | QUIC transport                 | `quinn`                                                       |
 | TLS + cert pinning             | `rustls` + custom `ServerCertVerifier`                        |
-| Userspace netstack             | `smoltcp`                                                     |
+| Userspace netstack             | `netstack-smoltcp` (over `smoltcp`)                           |
 | TUN device / fd                | `tun-rs`                                                      |
 | Async runtime / concurrency    | single-thread `tokio` + serialized actor                      |
 | QR generation (share)          | `qrcode` crate                                                |
@@ -98,10 +99,10 @@ State flows one way: tunnel → OS → model observes → snapshot → UI (§4).
 
 ## 3. Constraints that shape the design
 
-Platform baselines (minimum OS versions): iOS/iPadOS 15, macOS 13, Windows 10, Android `minSdk` 28
+Platform baselines (minimum OS versions): macOS 13, Windows 10, Android `minSdk` 28
 (Android 9 — `VpnService` plus Keystore fully supported, reaching most Android TV boxes). These set
-which OS APIs the design may rely on (e.g. the iOS NE memory cap story, §3.3; the best-effort
-sensitive-clipboard flag, §7.4).
+which OS APIs the design may rely on (e.g. the memory bounding for low-RAM Android TV boxes, §3.3;
+the best-effort sensitive-clipboard flag, §7.4).
 
 ### 3.1 TUN is platform-mediated; one netstack serves all
 
@@ -109,41 +110,43 @@ Each OS hands the tunnel a file descriptor, or (Windows) the core opens the adap
 
 | Platform             | Mechanism                                         | Core receives          |
 | -------------------- | ------------------------------------------------- | ---------------------- |
-| iOS / iPadOS / macOS | NetworkExtension Packet Tunnel Provider           | utun fd                |
+| macOS                | NetworkExtension Packet Tunnel Provider           | utun fd                |
 | Android / Android TV | `VpnService.establish()` → `ParcelFileDescriptor` | fd                     |
 | Windows              | Wintun adapter (kernel driver)                    | core opens it directly |
 
-`tun-rs` is the cross-platform fd/device wrapper: on Apple/Android we hand it the OS-provided fd;
+`tun-rs` is the cross-platform fd/device wrapper: on macOS/Android we hand it the OS-provided fd;
 on Windows it opens the Wintun adapter (bundled `wintun.dll`, §3.7). Either way it yields raw IP
-packets that feed the `smoltcp` netstack (§3.2). No privileged route/iptables work lives in the
-core: the OS (Apple `NEPacketTunnelNetworkSettings`, Android `VpnService`) or the Windows service
+packets that feed the netstack (§3.2). No privileged route/iptables work lives in the
+core: the OS (macOS `NEPacketTunnelNetworkSettings`, Android `VpnService`) or the Windows service
 sets routes.
 
-### 3.2 Userspace netstack: smoltcp
+### 3.2 Userspace netstack: netstack-smoltcp
 
-A TUN yields raw IP packets; a netstack turns them into connections. `smoltcp` is a pure-Rust,
-`no_std`-capable userspace TCP/IP stack: each `Interface` is independent, and it is light enough
-for the iOS cap (§3.3).
+A TUN yields raw IP packets; a netstack turns them into connections. `netstack-smoltcp` wraps the
+pure-Rust `smoltcp` TCP/IP stack and hands back accepted flows directly, so the core does not
+hand-roll packet parsing, socket lifecycle, or NAT.
 
-The bridge feeds tun-rs packets into a smoltcp `Interface`, and for each reconstructed flow opens
-a proxied path through the Hysteria client (§5, `hysteria/`):
+The bridge pumps tun-rs packets into the netstack and relays each accepted flow through the
+Hysteria client (§5, `hysteria/`):
 
-- accepted TCP flow → `HysteriaClient::tcp_connect(raddr)` → a Quinn bidi stream
-- UDP flow → a Hysteria UDP session over QUIC datagrams (RFC 9221, `Connection::send_datagram`)
+- accepted TCP flow (async stream, carrying the original destination) → `HysteriaClient::tcp(raddr)`
+  → a Quinn bidi stream, spliced with `copy_bidirectional`
+- UDP datagrams (with original source/destination) → per-source NAT over a Hysteria UDP session on
+  QUIC datagrams (RFC 9221, `Connection::send_datagram`)
 
 No raw sockets, no route table, no iptables — just the fd plus outbound QUIC dials, all permitted
-in the iOS NE sandbox. [Validate smoltcp + Quinn + fd writes in the NE sandbox at the iOS memory
-gate (§6, step 3).]
+in the macOS NE sandbox. [Validate the netstack + Quinn + fd writes in the NE sandbox at the macOS
+NE de-risk (§6, step 3).]
 
-### 3.3 iOS NE memory budget
+### 3.3 Memory bounding
 
-The core must fit the NE extension's hard memory cap. The cap rose to 50 MB in iOS 15, but recent
-reports (iPhone 14 Pro Max, iOS 17.3.1) show kills above ~15 MB, so design to 15 MB and treat
-50 MB as an unreliable ceiling. The material weight is Quinn's send/receive buffers plus smoltcp's
-packet buffers, both bounded and tunable. Engineer the ceiling: bound the buffer pools, cap
-concurrent flows, keep a single-threaded runtime in the extension. iOS is the constraint; macOS's
-cap is generous. The iOS memory gate measures it on-device against the real `tunnel/` crate
-(§6, step 3).
+The tunnel runs in a sandboxed extension (macOS NE) or the app process (Android `VpnService`).
+Memory is provisioned, not unbounded: the weight is Quinn's send/receive buffers plus the
+netstack's per-connection buffers. Bound it by capping concurrent flows (`tunnel`'s
+`Limits::max_tcp_flows` / `max_udp_sessions`) and keeping a single-threaded runtime in the
+extension. The binding target for the cap is the low-RAM Android TV box, where an app may be killed
+past a few hundred MB. Validate the tunnel in the macOS NE sandbox at the de-risk gate (§6, step 3)
+and re-check RSS on a real Android TV box at fan-out (§6, step 8).
 
 ### 3.4 Binding surface is flat — one C ABI for every platform
 
@@ -176,9 +179,9 @@ and never shipped.
 
 ### 3.6 macOS TUN: NetworkExtension
 
-Use a NE Packet Tunnel (sandboxed, App-Store-eligible, same code as iOS). The extension is a thin
-Swift `PacketTunnelProvider` linking the Rust `staticlib`. Needs the Network Extensions
-entitlement (a paid account suffices to build/test; an org is needed only for App Store, §8).
+Use a NE Packet Tunnel (sandboxed). The extension is a thin Swift `PacketTunnelProvider` linking
+the Rust `staticlib`. Needs the Network Extensions entitlement; a paid Apple Developer account
+suffices to build, test, and Developer-ID-notarize for off-store distribution (§8).
 
 ### 3.7 Licensing
 
@@ -186,7 +189,8 @@ The distributed binary statically links everything, so the tree stays permissive
 GPL/LGPL/MPL):
 
 - Our code is dual `Apache-2.0 OR MIT` (`LICENSE-*` at root).
-- `quinn`, `tun-rs`, `tokio`, `h3` (MIT/Apache-2.0), `rustls` (Apache/ISC/MIT), `smoltcp` (0BSD),
+- `quinn`, `tun-rs`, `tokio`, `h3`, `netstack-smoltcp` (MIT/Apache-2.0), `rustls` (Apache/ISC/MIT),
+  `smoltcp` (0BSD),
   crypto provider (`aws-lc-rs` Apache/ISC; `ring` ISC-style fallback).
 - .NET runtime plus BCL (MIT), Avalonia (MIT), SkiaSharp (MIT, over Skia BSD-3).
 - Windows Wintun — `tun-rs` uses the bundled `wintun.dll` (the signed build from wintun.net,
@@ -223,7 +227,7 @@ The app/extension wall is a compile-time crate-dependency guarantee: `ffi-ext` d
 `config` (the parser) or `model` (the state machine) in its `Cargo.toml`, so they cannot link in;
 a `cargo tree` assertion (a `mise` task, run locally and in CI) fails the build if that changes.
 The extension links only `{profile, store (read), conn-error, tunnel (which pulls hysteria),
-ffi-util}`, never the URL parser or the Model (the lever for the iOS cap, §3.3).
+ffi-util}`, never the URL parser or the Model (keeping the extension minimal, §3.3).
 
 Workspace conventions: shared versions in `[workspace.dependencies]`, shared metadata in
 `[workspace.package]` (`publish = false`, MSRV, license), and `[workspace.lints]` setting
@@ -277,7 +281,7 @@ hysteria-ui/
       store/               # JSON doc + SecureStore trait DEFINED here; deps: profile
       conn-error/          # connect-error enum; zero-dep leaf; crosses the app/ext wall
       hysteria/            # Hysteria 2 client on Quinn (mods: transport, auth, proxy, frag, obfs, brutal); builds the client from &profile::Profile
-      tunnel/              # smoltcp netstack + tun-rs fd; drives the hysteria client (ext-only)
+      tunnel/              # netstack-smoltcp (over smoltcp) + tun-rs fd; drives the hysteria client (ext-only)
       model/               # the Model: async serialized actor; sole app-side facade; state + stats snapshots; intents (app-only)
       ffi-util/            # handle table, catch_unwind export wrapper, buffer/JSON helpers, SecureStore C-callback adapter
       ffi-app/             # cdylib+staticlib (symbols hyapp_*): extern "C" + csbindgen; deps: model, ffi-util
@@ -320,19 +324,19 @@ hysteria-ui/
   seam clean leaves the door open to shipping it more widely later (e.g. a pure-Rust
   native-messaging host that a browser extension points `chrome.proxy` at — bypassing the C ABI and
   .NET entirely); out of v1 scope, an invariant to preserve.
-- `tunnel/` — `smoltcp` netstack (§3.2) plus `tun-rs` fd, driving the `hysteria` client: feed
-  tun-rs packets into smoltcp, route each accepted flow to `hysteria::tcp_connect` or a UDP
-  session, copy bytes both ways. Among shipped libs, ext-only (a separate dev TUN harness drives it
-  too). Counts traffic at the smoltcp↔hysteria seam for the stats snapshot.
+- `tunnel/` — `netstack-smoltcp` (§3.2) plus `tun-rs` fd, driving the `hysteria` client: pump
+  tun-rs packets through the netstack, relay each accepted TCP flow to `hysteria::tcp` and NAT UDP
+  over a `hysteria` UDP session, copying bytes both ways. Among shipped libs, ext-only (a separate
+  dev TUN harness drives it too). Counts traffic at the netstack↔hysteria seam for the stats
+  snapshot.
 - `socks5-bridge/` — a standalone SOCKS5 front-end over the `hysteria` client (TCP `CONNECT` plus
   UDP `ASSOCIATE`, covering both the TCP relay and the UDP/datagram relay), doubling as the
   protocol's local conformance loop. It takes a `hysteria2://` link (`--url`), parsed via `config`
   into a `profile::Profile` and built into the client config, plus a `--socks5` listen address.
   Usable on its own (per-app/browser proxying without a system-wide TUN); never linked into any
   `ffi-*` lib. The SOCKS5 protocol itself is delegated to `fast-socks5`. The TUN front-end (the
-  `tunnel` netstack over a root-opened utun on macOS, which the iOS memory gate measures) is a
-  separate dev binary added alongside `tunnel/` in step 2. Tested against the mise-managed local
-  server (below).
+  `tunnel` netstack over a root-opened utun on macOS) is a separate dev binary added alongside
+  `tunnel/` in step 2. Tested against the mise-managed local server (below).
 - `conn-error/` — a dependency-free leaf owning the connect-error enum (`AuthFailed |
 ServerUnreachable | TlsPinMismatch | Timeout | Unknown`). Produced in the extension (which must
   not link `model`) and relayed up; both `tunnel`/`hysteria` and `model` depend on it, neither on
@@ -373,17 +377,17 @@ the Avalonia layer displays it alongside a Copy button.
 
 ## 6. Roadmap
 
-Core-first: retire the two hardest risks early — protocol correctness and the iOS memory ceiling
-(§3.3) — before any OS/FFI/UI investment is built on top of them. The protocol is validated through
-the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise-managed local server
+Core-first: retire the hardest risk early — protocol correctness — and prove the tunnel runs in a
+sandboxed NE before any OS/FFI/UI investment is built on top of it. The protocol is validated
+through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise-managed local server
 (§3.8); FFI and UI come once the core is proven.
 
 0. Workspace plus guardrails — `core/` virtual manifest with empty crate skeletons,
    `[workspace.dependencies]`/`[workspace.lints]` (`unsafe_code = "forbid"` except `ffi-*`),
    `mise.toml` pinned toolchain, and the supply-chain/wall gates (`cargo-deny` plus the `cargo tree`
    wall assertion, §3.8) wired in CI from the first commit. Enroll in the paid Apple Developer
-   Program and enable the Network Extensions capability (§3.6) — required for the on-device memory
-   gate (step 3).
+   Program and enable the Network Extensions capability (§3.6) — required for the macOS NE de-risk
+   (step 3).
 1. Hysteria 2 client plus local SOCKS5 loop — `profile/` (leaf), `conn-error/`, and `hysteria/`
    (h3 auth handshake, TCP relay, UDP/datagram relay plus fragmentation, Brutal as a Quinn
    `congestion::Controller` — validate its pacing maps onto Quinn's pacer — Salamander obfs, port
@@ -392,17 +396,16 @@ the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise-managed
    the riskiest path). Conformance against the mise-managed pinned reference server (rev `c3a806b`):
    `curl` over TCP and `dig` over UDP, with and without obfs, plus the `pinSHA256` cert-pin path
    (§7.3).
-2. Userspace TUN, standalone — `tunnel/` (smoltcp plus tun-rs), exercised by its own dev TUN-harness
-   binary (the counterpart to `socks5-bridge`): on macOS
-   open a utun via raw fd as root — no NE, no FFI — feed packets through smoltcp into the proven
-   `hysteria` client. Validates the netstack end-to-end against the same local server; counts bytes
-   at the smoltcp↔hysteria seam.
-3. iOS memory gate — a minimal `staticlib` → Swift `PacketTunnelProvider` linking the `tunnel/`
-   crate, one hardcoded target, no UI. Measure RSS against the ~15 MB cap (§3.3) on a real device;
-   tune Quinn/smoltcp buffer pools until it fits; confirm smoltcp + Quinn + fd read/write run in the
-   NE sandbox. Doubles as the minimal staticlib + xcframework + cross-compile de-risk (the full
-   `csbindgen` C# binding comes at step 5). Existential gate — must pass before the fan-out (step 8)
-   is committed. Needs the capability from step 0; runs in parallel with step 4.
+2. Userspace TUN, standalone — `tunnel/` (netstack-smoltcp plus tun-rs), exercised by its own dev
+   TUN-harness binary (the counterpart to `socks5-bridge`): on macOS open a utun via raw fd as root
+   — no NE, no FFI — feed packets through the netstack into the proven `hysteria` client. Validates
+   the netstack end-to-end against the same local server; counts bytes at the netstack↔hysteria seam.
+3. macOS NE de-risk — a minimal `staticlib` → Swift `PacketTunnelProvider` linking the `tunnel/`
+   crate, one hardcoded target, no UI. Confirm the netstack + Quinn + fd read/write run in the
+   sandboxed macOS NE, and that the `staticlib` + xcframework (macOS slices) + cross-compile path
+   works (the full `csbindgen` C# binding comes at step 5). Sanity-check RSS here; the concurrency
+   cap is sized against a real low-RAM Android TV box at fan-out (§3.3). Must pass before the
+   fan-out (step 8) is committed. Needs the capability from step 0; runs in parallel with step 4.
 4. Config plus store (mock secrets) — `config` parser (→ `profile::Profile`) with `cargo fuzz` plus
    golden corpus; `store` over a container path with the `SecureStore` trait plus a dev-stub impl.
    Off the protocol critical path (shares only the `profile/` leaf) — parallelizable with steps 2–3.
@@ -419,10 +422,9 @@ the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise-managed
    entry (the universal path, including Android TV) plus an optional QR scanner where there is a
    camera; per-profile share view: the link with a Copy button (clipboard marked sensitive /
    local-only / auto-expiring; §7) plus its Rust-rendered QR.
-8. Fan out — only the OS shim, secure store, and packaging are new per platform: iOS/iPadOS (reuse
-   the Swift NE extension; Avalonia iOS head), Android/Android TV (`VpnService` in the .NET Android
-   head; Keystore store; D-pad focus pass), Windows (privileged service plus Wintun plus DPAPI store
-   plus installer).
+8. Fan out — only the OS shim, secure store, and packaging are new per platform: Android/Android TV
+   (`VpnService` in the .NET Android head; Keystore store; D-pad focus pass), Windows (privileged
+   service plus Wintun plus DPAPI store plus installer).
 
 ---
 
@@ -458,7 +460,7 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
    dependency log events (`quinn`/`rustls`/`tokio`/`h3`) reach no sink and there is nothing to leak;
    the `conn-error` enum (§5), mapped to an int in the extension, is the only diagnostic channel, so
    the server address cannot cross the boundary. The `socks5-bridge` binary and the dev/test
-   harnesses (conformance, the memory gate) keep `tracing` to stderr.
+   harnesses (conformance, the macOS NE de-risk) keep `tracing` to stderr.
 7. Supply chain and licensing — pin every crate; enforce with `cargo-deny` (license plus RustSec
    advisories) and a NuGet license scan. Prefer reproducible builds.
 8. Protocol implementation is security-sensitive — conformance tests against the reference server,
@@ -473,19 +475,15 @@ implementation bugs → memory-safe Rust plus conformance/fuzz testing.
 ## 8. Release gates and open decisions
 
 - Crypto provider — committed to `aws-lc-rs` (rustls default, actively maintained, FIPS-capable);
-  `ring` is the named fallback. The iOS memory gate (step 3) no longer _chooses_ the provider but
-  _verifies_ `aws-lc-rs` fits the cap (§3.3), and is the only point where we would reverse to
-  `ring`. Build prereqs (C toolchain, CMake, NASM on Windows) are pinned in `mise.toml` (§3.8).
-- Apple Network-Extension entitlement — a paid account suffices to build/test (§3.6); enable the
-  Network Extensions capability before the memory gate (step 3). Org enrollment is App-Store-only
-  (publishing entity, below).
-- Store publishing org entity — Apple (Guideline 5.4) and Google Play both require organization
-  enrollment plus D-U-N-S to publish a VPN; an individual account cannot. One legal entity (LLC or
-  non-profit) covers both. Off-store routes need no entity: macOS Developer-ID-notarized, Android
-  via APK/F-Droid, Windows outside the Microsoft Store. Gates release only. [Decision deferred
-  until the core works.]
-- App Store Guideline 5.4 — use NEVPNManager; the privacy policy commits to no third-party data
-  sale; declare data collection before use.
+  `ring` is the named fallback. The macOS NE de-risk (step 3) verifies `aws-lc-rs` builds and runs
+  in the sandboxed extension, and is the only point where we would reverse to `ring`. Build prereqs
+  (C toolchain, CMake, NASM on Windows) are pinned in `mise.toml` (§3.8).
+- Apple Network-Extension entitlement — a paid Apple Developer account suffices for the macOS NE
+  (build, test, and Developer-ID notarization, §3.6); enable the Network Extensions capability
+  before the macOS NE de-risk (step 3).
+- Distribution — off-store only, so no organization/LLC/D-U-N-S enrollment is needed: macOS
+  Developer-ID-signed and notarized (outside the Mac App Store), Android via a signed APK / F-Droid,
+  Windows via a signed installer outside the Microsoft Store.
 - Acknowledgements bundle — generate a third-party-notices screen at build time spanning both
   trees: the Rust crates (`cargo-about`/`cargo-deny`) and the .NET/NuGet tree, plus the Wintun
   notice.
@@ -505,8 +503,8 @@ Crate APIs:
 - `quinn` — `quinn::congestion::{Controller, ControllerFactory}` (Brutal);
   `Connection::send_datagram`/`read_datagram` (UDP relay); custom `AsyncUdpSocket` (Salamander
   obfs plus port-hop); `TransportConfig`.
-- `smoltcp` — `Interface` plus sockets (the userspace TCP/IP stack); fed by tun-rs, flows routed
-  to the `hysteria` client.
+- `netstack-smoltcp` — `StackBuilder` → accepted `TcpListener`/`UdpSocket` flows over `smoltcp`,
+  fed by tun-rs, routed to the `hysteria` client.
 - `tun-rs` — cross-platform TUN device / fd wrapper (utun, Wintun, OS-provided
   fd).
 - `h3` plus `h3-quinn` — HTTP/3 for the auth handshake over the Quinn connection.

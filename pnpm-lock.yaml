@@ -76,6 +76,10 @@ importers:
 
   crates/socks5-bridge: {}
 
+  crates/tun-bridge: {}
+
+  crates/tunnel: {}
+
 packages:
 
   '@noble/hashes@1.4.0':

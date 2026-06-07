@@ -522,6 +522,20 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/profile --if-present run ci-build'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
+[tasks."ci-build:tunnel"]
+description = "Build tunnel crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/tunnel --if-present run ci-build'
+sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-build:tun-bridge"]
+description = "Build tun-bridge crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/tun-bridge --if-present run ci-build'
+sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-build"]
 description = "Build all crates for CI"
 hide = true
@@ -531,6 +545,8 @@ depends = [
     "ci-build:socks5-bridge",
     "ci-build:hysteria",
     "ci-build:profile",
+    "ci-build:tunnel",
+    "ci-build:tun-bridge",
 ]
 
 # --- CI Test tasks ---
@@ -569,6 +585,20 @@ depends = ["check"]
 run = 'pnpm -C crates/profile --if-present run ci-test'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
+[tasks."ci-test:tunnel"]
+description = "Run CI tests for tunnel crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/tunnel --if-present run ci-test'
+sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test:tun-bridge"]
+description = "Run CI tests for tun-bridge crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/tun-bridge --if-present run ci-test'
+sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-test"]
 description = "Run all CI tests"
 hide = true
@@ -578,6 +608,8 @@ depends = [
     "ci-test:socks5-bridge",
     "ci-test:hysteria",
     "ci-test:profile",
+    "ci-test:tunnel",
+    "ci-test:tun-bridge",
 ]
 
 # --- Build tasks ---
@@ -616,6 +648,20 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/profile --if-present run build'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
+[tasks."build:tunnel"]
+description = "Build tunnel crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/tunnel --if-present run build'
+sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+
+[tasks."build:tun-bridge"]
+description = "Build tun-bridge crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/tun-bridge --if-present run build'
+sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks.build]
 description = "Compile all crates"
 alias = "b"
@@ -625,6 +671,8 @@ depends = [
     "build:socks5-bridge",
     "build:hysteria",
     "build:profile",
+    "build:tunnel",
+    "build:tun-bridge",
 ]
 
 # --- Test tasks ---
@@ -663,6 +711,20 @@ depends = ["fix"]
 run = 'pnpm -C crates/profile --if-present run test'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
+[tasks."test:tunnel"]
+description = "Run tests for tunnel crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/tunnel --if-present run test'
+sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+
+[tasks."test:tun-bridge"]
+description = "Run tests for tun-bridge crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/tun-bridge --if-present run test'
+sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+
 [tasks.test]
 description = "Run all tests"
 alias = "t"
@@ -672,6 +734,8 @@ depends = [
     "test:socks5-bridge",
     "test:hysteria",
     "test:profile",
+    "test:tunnel",
+    "test:tun-bridge",
 ]
 
 # ============================================================================

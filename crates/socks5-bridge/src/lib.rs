@@ -14,6 +14,7 @@
 // The binary prints listen/connection status to stderr.
 #![expect(clippy::print_stderr, reason = "CLI status output")]
 
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -77,7 +78,12 @@ pub async fn run(cli: Cli) -> Result<()> {
     let listener = TcpListener::bind(listen)
         .await
         .context("bind SOCKS5 listener")?;
-    eprintln!("SOCKS5 listening on {}", listener.local_addr()?);
+    eprintln!(
+        "SOCKS5 listening on {}",
+        listener
+            .local_addr()
+            .context("SOCKS5 listener local address")?
+    );
     serve(listener, Arc::new(client)).await
 }
 
@@ -99,6 +105,12 @@ pub async fn serve(listener: TcpListener, client: Arc<Client>) -> Result<()> {
 
 /// Run the SOCKS5 handshake (delegated to `fast-socks5`) and dispatch the command.
 async fn handle(stream: TcpStream, client: Arc<Client>) -> Result<()> {
+    // The local IP the client reached us on — the UDP relay binds here so the
+    // address we hand back is reachable from wherever the client is.
+    let local_ip = stream
+        .local_addr()
+        .context("connection local address")?
+        .ip();
     let (proto, cmd, target) = Socks5ServerProtocol::accept_no_auth(stream)
         .await
         .context("SOCKS5 handshake")?
@@ -108,7 +120,7 @@ async fn handle(stream: TcpStream, client: Arc<Client>) -> Result<()> {
 
     match cmd {
         Socks5Command::TCPConnect => handle_connect(proto, target.to_string(), client).await,
-        Socks5Command::UDPAssociate => handle_udp_associate(proto, client).await,
+        Socks5Command::UDPAssociate => handle_udp_associate(proto, client, local_ip).await,
         Socks5Command::TCPBind => {
             proto.reply_error(&ReplyError::CommandNotSupported).await?;
             bail!("SOCKS5 BIND is not supported");
@@ -144,8 +156,11 @@ async fn handle_connect(
 async fn handle_udp_associate(
     proto: Socks5ServerProtocol<TcpStream, CommandRead>,
     client: Arc<Client>,
+    local_ip: IpAddr,
 ) -> Result<()> {
-    let relay = UdpSocket::bind(("127.0.0.1", 0))
+    // Bind on the same interface the client reached us on (loopback for a local
+    // client, the LAN/public IP for a remote one) so `relay_addr` is reachable.
+    let relay = UdpSocket::bind((local_ip, 0))
         .await
         .context("bind UDP relay")?;
     let relay_addr = relay.local_addr().context("relay addr")?;
@@ -168,7 +183,13 @@ async fn handle_udp_associate(
             // SOCKS client → tunnel.
             recv = relay.recv_from(&mut packet) => {
                 let (n, from) = recv.context("recv from SOCKS UDP")?;
-                client_addr = Some(from);
+                // RFC 1928: only the associating client may use this relay. Pin to
+                // the first sender and ignore datagrams from any other local
+                // process (which could otherwise inject traffic or hijack replies).
+                match client_addr {
+                    Some(pinned) if pinned != from => continue,
+                    _ => client_addr = Some(from),
+                }
                 // fast-socks5 parses the SOCKS5 UDP request; drop fragments (frag != 0).
                 if let Ok((0, target, data)) = parse_udp_request(&packet[..n]).await {
                     let _ = session.send(data, &target.to_string());

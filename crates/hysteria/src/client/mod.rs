@@ -2,6 +2,7 @@
 //! relay, the UDP session manager, and authentication over the Quinn transport.
 
 pub mod config;
+pub mod connect_error;
 // Pure internals (socket wrappers + TLS pinning); not part of the public API.
 mod hop_socket;
 mod obfs_socket;
@@ -9,6 +10,7 @@ mod tls;
 pub mod transport;
 pub mod udp;
 
+pub use connect_error::ConnectFailure;
 pub use transport::Client;
 pub use transport::HandshakeInfo;
 pub use transport::TcpConn;

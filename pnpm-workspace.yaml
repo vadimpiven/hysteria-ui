@@ -4,6 +4,8 @@ packages:
   - crates/hysteria
   - crates/profile
   - crates/socks5-bridge
+  - crates/tun-bridge
+  - crates/tunnel
 
 allowBuilds: {}
 

@@ -11,12 +11,14 @@ anyhow.workspace = true
 # BLAKE2b-256 for Salamander obfuscation.
 blake2.workspace = true
 bytes.workspace = true
+# Secret-free connect-failure categories that `connect` errors map to.
+conn-error = { path = "../conn-error" }
 # HTTP/3 auth handshake over the QUIC connection.
 h3.workspace = true
 h3-quinn.workspace = true
 http.workspace = true
 # Parsed connection profile; the `Config::from_profile` builder maps it to the
-# client config (PLAN: hysteria owns the `&Profile -> client config` builder).
+# client config (hysteria owns the `&Profile -> client config` builder).
 profile = { path = "../profile" }
 # QUIC transport + Brutal congestion control (`quinn_proto::congestion`).
 quinn.workspace = true
