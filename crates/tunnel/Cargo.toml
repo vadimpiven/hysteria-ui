@@ -8,10 +8,13 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# Sink/Stream adapters for bridging the netstack to the TUN device.
+futures.workspace = true
 hysteria = { path = "../hysteria" }
-# Userspace TCP/IP netstack over the TUN fd.
-smoltcp.workspace = true
-# Background netstack task + per-flow channels.
+# Userspace TCP/IP netstack: accepts flows from the TUN's IP packets and hands
+# back async TCP streams + a UDP socket (replaces the hand-rolled smoltcp glue).
+netstack-smoltcp.workspace = true
+# Per-flow relay tasks, channels, shutdown.
 tokio.workspace = true
 # TUN device (the OS-provided fd in production; a utun in the dev harness).
 tun-rs.workspace = true

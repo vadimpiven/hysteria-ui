@@ -3,7 +3,7 @@
 //! Mirrors the Go TUN handler: one Hysteria UDP session per app *source*
 //! endpoint, multiplexing every destination through it (the destination rides
 //! each datagram's address). A per-session task pumps replies back out as
-//! [`UdpOutbound`]. Sessions idle for [`crate::stack::UDP_IDLE`] are reaped.
+//! [`UdpOutbound`]. Idle sessions are reaped via [`reap_idle`](Sessions::reap_idle).
 //!
 //! The map is abstracted over [`UdpRelay`] (implemented for the Hysteria
 //! `UdpConn`) so the NAT/GC logic is unit-testable with a fake relay.
@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use crate::udp::UdpOutbound;
+use crate::UdpOutbound;
 
 /// A received datagram: payload plus the source address it came from, as a string.
 type Datagram = (Vec<u8>, String);

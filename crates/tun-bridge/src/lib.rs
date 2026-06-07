@@ -75,19 +75,14 @@ pub async fn run(cli: Cli) -> Result<()> {
         cli.tun_addr, cli.tun_prefix, cli.mtu,
     );
 
-    let netstack = tunnel::Config {
-        address: cli.tun_addr,
-        prefix: cli.tun_prefix,
-        address6: cli.tun_addr6,
-        prefix6: cli.tun_prefix6,
-        mtu: usize::from(cli.mtu),
-        limits: tunnel::Limits::default(),
-    };
+    // The netstack is transparent (it forwards any destination); the TUN's own
+    // addresses are configured on the device above, not here.
+    let netstack = tunnel::Config::new(usize::from(cli.mtu));
 
     // Production wires the OS-provided fd into `tunnel::spawn` from `ffi-ext`
     // (which wraps it via `unsafe AsyncDevice::from_fd`); here we drive the same
     // handle API over a self-opened utun, tearing down gracefully on Ctrl-C.
-    let handle = tunnel::spawn(device, Arc::new(client), netstack);
+    let handle = tunnel::spawn(device, Arc::new(client), netstack)?;
     eprintln!("connected; press Ctrl-C to disconnect");
     tokio::signal::ctrl_c().await.context("await Ctrl-C")?;
     eprintln!("disconnecting…");

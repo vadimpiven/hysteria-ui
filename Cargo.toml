@@ -118,17 +118,12 @@ rustls-pki-types = "1.14.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha2 = "0.10.9"
-# Userspace TCP/IP netstack for the TUN front-end (tunnel crate). default
-# features off to keep only IP + TCP/UDP (no ethernet/6lowpan), for the iOS cap.
-smoltcp = { version = "0.13.1", default-features = false, features = [
-    "std",
-    "async",
-    "medium-ip",
-    "proto-ipv4",
-    "proto-ipv6",
-    "socket-tcp",
-    "socket-udp",
-] }
+# Userspace TCP/IP netstack over smoltcp for the TUN front-end (tunnel crate):
+# wraps smoltcp and hands back accepted TCP streams + a UDP socket, so we don't
+# hand-roll packet parsing / socket lifecycle / NAT.
+netstack-smoltcp = "0.2.2"
+# Sink/Stream adapters for bridging the netstack to the TUN device.
+futures = "0.3.31"
 # Cross-platform TUN device (macOS utun, OS-provided fd) for tun-bridge/tunnel.
 tokio = { version = "1.52.3", features = [
     "io-util",
