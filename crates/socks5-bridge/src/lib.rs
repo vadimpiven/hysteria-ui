@@ -168,7 +168,13 @@ async fn handle_udp_associate(
             // SOCKS client → tunnel.
             recv = relay.recv_from(&mut packet) => {
                 let (n, from) = recv.context("recv from SOCKS UDP")?;
-                client_addr = Some(from);
+                // RFC 1928: only the associating client may use this relay. Pin to
+                // the first sender and ignore datagrams from any other local
+                // process (which could otherwise inject traffic or hijack replies).
+                match client_addr {
+                    Some(pinned) if pinned != from => continue,
+                    _ => client_addr = Some(from),
+                }
                 // fast-socks5 parses the SOCKS5 UDP request; drop fragments (frag != 0).
                 if let Ok((0, target, data)) = parse_udp_request(&packet[..n]).await {
                     let _ = session.send(data, &target.to_string());

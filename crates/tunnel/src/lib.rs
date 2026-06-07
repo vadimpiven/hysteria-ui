@@ -142,8 +142,15 @@ impl Handle {
 pub fn spawn(device: Arc<AsyncDevice>, client: Arc<Client>, config: Config) -> Handle {
     let counters = Counters::new();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let max_udp_sessions = config.limits.max_udp_sessions;
     let stack = stack::start(device, config, shutdown_rx.clone());
-    let join = tokio::spawn(orchestrate(client, stack, counters.clone(), shutdown_rx));
+    let join = tokio::spawn(orchestrate(
+        client,
+        stack,
+        counters.clone(),
+        shutdown_rx,
+        max_udp_sessions,
+    ));
     Handle {
         join,
         shutdown: shutdown_tx,
@@ -166,10 +173,11 @@ async fn orchestrate(
     mut stack: StackHandle,
     counters: Counters,
     mut shutdown: watch::Receiver<bool>,
+    max_udp_sessions: usize,
 ) {
     let mut sessions: Sessions<
         hysteria::client::udp::UdpConn<hysteria::client::transport::QuinnUdpIo>,
-    > = Sessions::new();
+    > = Sessions::new(max_udp_sessions);
     let recv_ctx = RecvCtx {
         udp_out: stack.udp_out.clone(),
         shutdown: shutdown.clone(),

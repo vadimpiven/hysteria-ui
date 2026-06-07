@@ -82,6 +82,9 @@ pub struct Limits {
     pub tcp_tx_buffer: usize,
     /// Max concurrent UDP destinations (one smoltcp socket each).
     pub max_udp_sockets: usize,
+    /// Max concurrent UDP NAT sessions (one Hysteria session per app source).
+    /// Bounds the session map against a local source-port flood.
+    pub max_udp_sessions: usize,
     pub udp_rx_buffer: usize,
     pub udp_tx_buffer: usize,
     /// Datagrams each UDP socket can buffer per direction (metadata slots).
@@ -95,6 +98,7 @@ impl Default for Limits {
             tcp_rx_buffer: 16 * 1024,
             tcp_tx_buffer: 16 * 1024,
             max_udp_sockets: 256,
+            max_udp_sessions: 256,
             udp_rx_buffer: 32 * 1024,
             udp_tx_buffer: 16 * 1024,
             udp_packets: 8,

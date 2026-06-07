@@ -36,6 +36,10 @@ codegen-units = 1
 lto = "thin"
 
 [workspace.lints.rust]
+# Memory safety by construction: no crate may use `unsafe`. The FFI crates
+# (ffi-util/ffi-app/ffi-ext), when added, override this per-crate at the C-ABI
+# boundary — the only place `unsafe` is permitted.
+unsafe_code = "forbid"
 non_ascii_idents = "forbid"
 rust_2018_idioms = { level = "deny", priority = -1 }
 macro_use_extern_crate = "deny"

@@ -66,12 +66,17 @@ struct Entry<R> {
 /// UDP sessions keyed by app source endpoint (the NAT key).
 pub(crate) struct Sessions<R: UdpRelay> {
     map: HashMap<SocketAddr, Entry<R>>,
+    /// Cap on concurrent sessions; a new source past this is refused (its
+    /// datagram is dropped) so a local source-port flood can't grow the map —
+    /// and the server's session table — without bound.
+    max: usize,
 }
 
 impl<R: UdpRelay> Sessions<R> {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(max: usize) -> Self {
         Self {
             map: HashMap::new(),
+            max,
         }
     }
 
@@ -90,6 +95,9 @@ impl<R: UdpRelay> Sessions<R> {
         if let Some(entry) = self.map.get_mut(&src) {
             entry.last_activity = now;
             return Some(Arc::clone(&entry.conn));
+        }
+        if self.map.len() >= self.max {
+            return None; // session table full: drop, like the TCP/UDP-socket caps
         }
         let conn = create()?;
         ctx.sessions.fetch_add(1, Ordering::Relaxed);
@@ -249,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn get_or_create_dedups_by_source() -> Result<()> {
         let (ctx, _rx) = ctx();
-        let mut sessions: Sessions<FakeRelay> = Sessions::new();
+        let mut sessions: Sessions<FakeRelay> = Sessions::new(usize::MAX);
         let src: SocketAddr = "10.0.0.2:40000".parse()?;
         let now = Instant::now();
 
@@ -274,7 +282,7 @@ mod tests {
     #[tokio::test]
     async fn reap_idle_drops_stale_sessions() -> Result<()> {
         let (ctx, _rx) = ctx();
-        let mut sessions: Sessions<FakeRelay> = Sessions::new();
+        let mut sessions: Sessions<FakeRelay> = Sessions::new(usize::MAX);
         let src: SocketAddr = "10.0.0.2:40000".parse()?;
         let start = Instant::now();
 
@@ -296,7 +304,7 @@ mod tests {
     #[tokio::test]
     async fn forward_sends_datagram_to_destination() -> Result<()> {
         let (ctx, _rx) = ctx();
-        let mut sessions: Sessions<FakeRelay> = Sessions::new();
+        let mut sessions: Sessions<FakeRelay> = Sessions::new(usize::MAX);
         let src: SocketAddr = "10.0.0.2:40000".parse()?;
         let dst: SocketAddr = "1.1.1.1:53".parse()?;
         let relay = Arc::new(FakeRelay {
@@ -316,6 +324,36 @@ mod tests {
             vec![(b"hi".to_vec(), "1.1.1.1:53".to_string())],
             "sent payload to the destination address"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refuses_new_source_when_session_table_is_full() -> Result<()> {
+        let (ctx, _rx) = ctx();
+        let mut sessions: Sessions<FakeRelay> = Sessions::new(1);
+        let now = Instant::now();
+        let make = || {
+            Some(Arc::new(FakeRelay {
+                sent: Mutex::new(Vec::new()),
+            }))
+        };
+
+        let first: SocketAddr = "10.0.0.2:40000".parse()?;
+        assert!(
+            sessions.get_or_create(first, now, &ctx, make).is_some(),
+            "first source opens a session"
+        );
+        let second: SocketAddr = "10.0.0.2:40001".parse()?;
+        assert!(
+            sessions.get_or_create(second, now, &ctx, make).is_none(),
+            "a new source past the cap is refused"
+        );
+        // The already-open source is still served (the cap only blocks new ones).
+        assert!(
+            sessions.get_or_create(first, now, &ctx, make).is_some(),
+            "an existing source is unaffected by the cap"
+        );
+        assert_eq!(sessions.len(), 1, "the cap held the table at one session");
         Ok(())
     }
 }

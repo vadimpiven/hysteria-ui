@@ -8,6 +8,7 @@
 //! config by the client (Brutal when a TX bound is known, else BBR) rather than
 //! a separate `CongestionConfig` — Reno is not supported.
 
+use std::fmt;
 use std::net::SocketAddr;
 use std::net::ToSocketAddrs as _;
 use std::time::Duration;
@@ -26,7 +27,10 @@ const DEFAULT_HOP_INTERVAL: Duration = Duration::from_secs(30);
 const MIN_HOP_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Client configuration.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is hand-written to redact the secrets (`auth`, the obfs PSK): a stray
+/// `{:?}` must never leak the bearer credential.
+#[derive(Clone)]
 pub struct Config {
     pub server_addr: SocketAddr,
     pub auth: String,
@@ -41,6 +45,23 @@ pub struct Config {
     pub hop_ports: Option<PortUnion>,
     /// How often to hop (only used when `hop_ports` is set).
     pub hop_interval: HopIntervalConfig,
+}
+
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("server_addr", &self.server_addr)
+            .field("auth", &"<redacted>")
+            .field("tls", &self.tls)
+            .field("quic", &self.quic)
+            .field("bandwidth", &self.bandwidth)
+            .field("fast_open", &self.fast_open)
+            // Show only whether the obfs PSK is set, never the key bytes.
+            .field("obfs", &self.obfs.as_ref().map(|_| "<redacted>"))
+            .field("hop_ports", &self.hop_ports)
+            .field("hop_interval", &self.hop_interval)
+            .finish()
+    }
 }
 
 impl Config {

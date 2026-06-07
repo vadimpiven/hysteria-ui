@@ -23,6 +23,12 @@ pub fn frag_udp_message(m: &UdpMessage, max_size: usize) -> Vec<UdpMessage> {
         return Vec::new();
     }
     let max_payload_size = max_size - header_size;
+    // REPORT UPSTREAM: a payload needing >255 fragments truncates `frag_count`
+    // (`as u8`) and overflows `frag_id` in the loop below. The reference has the
+    // same latent bug (`core/internal/frag/frag.go`: `uint8(...)` count, then
+    // `frags[fragID]` would index out of bounds). Unreachable in practice — one
+    // QUIC datagram payload is far below 255 × max_payload_size — and this is the
+    // outbound/local-app path, not server-controlled input. Left faithful to Go.
     let frag_count = full_payload.len().div_ceil(max_payload_size) as u8; // round up
     let mut frags = Vec::with_capacity(frag_count as usize);
     let mut off = 0;
