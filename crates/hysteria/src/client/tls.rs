@@ -13,6 +13,8 @@
 //! so a pinned connection still proves the server holds the cert's private key.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use rustls::ClientConfig;
 use rustls::DigitallySignedStruct;
@@ -45,6 +47,9 @@ const ALPN_H3: &[u8] = b"h3";
 struct PinnedServerCertVerifier {
     pin: [u8; 32],
     supported_algs: WebPkiSupportedAlgorithms,
+    /// Set when the pin check fails, so `connect` can tell a pin mismatch apart
+    /// from an unreachable server (rustls flattens the reason into a TLS alert).
+    rejected: Arc<AtomicBool>,
 }
 
 impl ServerCertVerifier for PinnedServerCertVerifier {
@@ -60,6 +65,7 @@ impl ServerCertVerifier for PinnedServerCertVerifier {
         if digest.as_slice() == self.pin {
             Ok(ServerCertVerified::assertion())
         } else {
+            self.rejected.store(true, Ordering::Relaxed);
             Err(RustlsError::General(
                 "pinned certificate hash mismatch".to_owned(),
             ))
@@ -91,7 +97,12 @@ impl ServerCertVerifier for PinnedServerCertVerifier {
 
 /// Build the rustls `ClientConfig` (TLS 1.3, ALPN `h3`) for the given TLS
 /// settings, applying the pinning rules described in the module docs.
-pub fn build_rustls_client_config(tls: &TlsConfig) -> Result<ClientConfig, ConfigError> {
+/// `pin_rejected` is flipped by the pinned verifier on a hash mismatch (unused on
+/// the other paths).
+pub fn build_rustls_client_config(
+    tls: &TlsConfig,
+    pin_rejected: &Arc<AtomicBool>,
+) -> Result<ClientConfig, ConfigError> {
     let provider = Arc::new(default_provider());
     let builder = ClientConfig::builder_with_provider(Arc::clone(&provider))
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -106,6 +117,7 @@ pub fn build_rustls_client_config(tls: &TlsConfig) -> Result<ClientConfig, Confi
             let verifier = Arc::new(PinnedServerCertVerifier {
                 pin: *pin,
                 supported_algs: provider.signature_verification_algorithms,
+                rejected: Arc::clone(pin_rejected),
             });
             builder
                 .dangerous()
@@ -148,6 +160,7 @@ mod tests {
         PinnedServerCertVerifier {
             pin: Sha256::digest(cert).into(),
             supported_algs: default_provider().signature_verification_algorithms,
+            rejected: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -169,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn mismatched_pin_is_rejected() -> anyhow::Result<()> {
+    fn mismatched_pin_is_rejected_and_flags() -> anyhow::Result<()> {
         let verifier = verifier_for(b"the certificate we pinned");
         let name = ServerName::try_from("localhost")?;
         let result = verifier.verify_server_cert(
@@ -183,6 +196,10 @@ mod tests {
             result.is_err(),
             "a non-matching certificate must be rejected"
         );
+        assert!(
+            verifier.rejected.load(Ordering::Relaxed),
+            "a mismatch sets the rejected flag so connect can report a pin mismatch"
+        );
         Ok(())
     }
 
@@ -192,7 +209,7 @@ mod tests {
             insecure: true,
             ..TlsConfig::default()
         };
-        let result = build_rustls_client_config(&tls);
+        let result = build_rustls_client_config(&tls, &Arc::new(AtomicBool::new(false)));
         assert!(result.is_err(), "insecure=1 without a pin must be rejected");
     }
 
@@ -203,7 +220,8 @@ mod tests {
             insecure: true,
             ..TlsConfig::default()
         };
-        let config = build_rustls_client_config(&tls).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let config = build_rustls_client_config(&tls, &Arc::new(AtomicBool::new(false)))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         assert_eq!(config.alpn_protocols, vec![b"h3".to_vec()], "ALPN is h3");
         Ok(())
     }

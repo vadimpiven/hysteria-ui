@@ -733,6 +733,7 @@ dependencies = [
  "anyhow",
  "blake2",
  "bytes",
+ "conn-error",
  "h3",
  "h3-quinn",
  "http",

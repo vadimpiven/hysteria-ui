@@ -19,6 +19,8 @@ use std::net::Ipv6Addr;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
 
@@ -32,6 +34,7 @@ use tokio::io::AsyncWrite;
 use tokio::task::JoinHandle;
 
 use crate::client::config::Config;
+use crate::client::connect_error::ConnectFailure;
 use crate::client::hop_socket::HopUdpSocket;
 use crate::client::obfs_socket::ObfsUdpSocket;
 use crate::client::tls::build_rustls_client_config;
@@ -99,29 +102,39 @@ pub struct Client {
 
 impl Client {
     /// Dial the server, authenticate, and return the client plus handshake info.
-    pub async fn connect(mut config: Config) -> Result<(Self, HandshakeInfo)> {
-        config.verify_and_fill()?;
+    /// On failure returns a [`ConnectFailure`] categorized for the caller (and
+    /// mappable to a secret-free `ConnError`).
+    pub async fn connect(mut config: Config) -> Result<(Self, HandshakeInfo), ConnectFailure> {
+        config
+            .verify_and_fill()
+            .map_err(|e| ConnectFailure::Config(anyhow::Error::new(e)))?;
         // Normalise IPv4-mapped IPv6 (e.g. `::ffff:1.2.3.4`) to plain IPv4 so the
         // bind socket family and the dial target agree on dual-stack-disabled hosts.
         config
             .server_addr
             .set_ip(config.server_addr.ip().to_canonical());
 
-        let client_config = build_quic_client_config(&config)?;
+        // The pinned verifier flips this on a hash mismatch, letting a failed
+        // handshake below be reported as a pin mismatch rather than unreachable.
+        let pin_rejected = Arc::new(AtomicBool::new(false));
+        let client_config =
+            build_quic_client_config(&config, &pin_rejected).map_err(ConnectFailure::Config)?;
         let bind: SocketAddr = if config.server_addr.is_ipv4() {
             (Ipv4Addr::UNSPECIFIED, 0).into()
         } else {
             (Ipv6Addr::UNSPECIFIED, 0).into()
         };
-        let endpoint = build_endpoint(bind, &config)?;
+        let endpoint = build_endpoint(bind, &config).map_err(ConnectFailure::Unreachable)?;
 
         let conn = endpoint
             .connect_with(client_config, config.server_addr, &config.tls.server_name)
-            .map_err(|e| ConnectError { err: Box::new(e) })?
+            .map_err(|e| ConnectFailure::Unreachable(anyhow::Error::new(e)))?
             .await
-            .map_err(|e| ConnectError { err: Box::new(e) })?;
+            .map_err(|e| categorize_handshake(e, &pin_rejected))?;
 
-        let info = authenticate(&conn, &config).await?;
+        let info = authenticate(&conn, &config)
+            .await
+            .map_err(categorize_auth)?;
 
         let udp_sm = if info.udp_enabled {
             Some(UdpSessionManager::new(Arc::new(QuinnUdpIo {
@@ -302,10 +315,36 @@ fn effective_tx(rx_auto: bool, server_rx: u64, client_tx: u64) -> u64 {
     }
 }
 
+/// Categorize a QUIC handshake failure. A set `pin_rejected` flag means our
+/// pinned verifier turned the certificate away; otherwise an idle timeout is told
+/// apart from a generic unreachable/closed connection.
+fn categorize_handshake(err: quinn::ConnectionError, pin_rejected: &AtomicBool) -> ConnectFailure {
+    if pin_rejected.load(Ordering::Relaxed) {
+        ConnectFailure::PinMismatch(anyhow::Error::new(err))
+    } else if matches!(err, quinn::ConnectionError::TimedOut) {
+        ConnectFailure::Timeout(anyhow::Error::new(err))
+    } else {
+        ConnectFailure::Unreachable(anyhow::Error::new(err))
+    }
+}
+
+/// Categorize an authentication-stage failure: a credential rejection
+/// ([`AuthError`]) versus the connection breaking mid-handshake.
+fn categorize_auth(err: anyhow::Error) -> ConnectFailure {
+    if err.downcast_ref::<AuthError>().is_some() {
+        ConnectFailure::Auth(err)
+    } else {
+        ConnectFailure::Unreachable(err)
+    }
+}
+
 /// Build the quinn client config: rustls (pinning) + transport tunables +
 /// congestion controller (Brutal from the configured TX, else BBR).
-fn build_quic_client_config(config: &Config) -> Result<quinn::ClientConfig> {
-    let rustls_config = build_rustls_client_config(&config.tls)?;
+fn build_quic_client_config(
+    config: &Config,
+    pin_rejected: &Arc<AtomicBool>,
+) -> Result<quinn::ClientConfig> {
+    let rustls_config = build_rustls_client_config(&config.tls, pin_rejected)?;
     let quic_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(rustls_config)
         .map_err(|e| anyhow!("QUIC TLS config: {e}"))?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(quic_crypto));
