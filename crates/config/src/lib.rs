@@ -34,11 +34,14 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'~');
 
 /// Percent-encode set for the `#fragment` (the display name): the URL Standard
-/// fragment set (as in the `percent-encoding` docs), plus `%` and `#`. The crate
-/// always escapes non-ASCII, so a name stays a clean ASCII link while readable
-/// punctuation like `:`/`!` is kept literal (`Work: NYC!` → `Work:%20NYC!`); `%`
-/// is escaped so a literal `%` survives [`name_from_uri`]'s decode, and `#` so it
-/// cannot be taken as the fragment delimiter.
+/// fragment set (as in the `percent-encoding` docs), plus `%`, `#`, and `+`. The
+/// crate always escapes non-ASCII, so a name stays a clean ASCII link while
+/// readable punctuation like `:`/`!` is kept literal (`Work: NYC!` →
+/// `Work:%20NYC!`). The three additions guard the decode: `%` so a literal `%`
+/// survives [`name_from_uri`]'s decode, `#` so it is not taken as the fragment
+/// delimiter, and `+` so a *form* decoder (e.g. `NekoBox` decodes the fragment
+/// with `URLDecoder`, which turns `+` into a space) cannot corrupt a name like
+/// `C++`.
 const FRAGMENT: &AsciiSet = &CONTROLS
     .add(b' ')
     .add(b'"')
@@ -46,7 +49,8 @@ const FRAGMENT: &AsciiSet = &CONTROLS
     .add(b'>')
     .add(b'`')
     .add(b'%')
-    .add(b'#');
+    .add(b'#')
+    .add(b'+');
 
 /// Parse a `hysteria2://` (or `hy2://`) link into a [`Profile`]. Returns `None`
 /// if `s` is not such a link (a non-matching scheme, or no host), mirroring the
@@ -367,6 +371,19 @@ mod tests {
             name_from_uri(&link),
             Some("Work: NYC!".to_string()),
             "the punctuated name still round-trips",
+        );
+
+        // `+` is escaped so a form decoder (NekoBox uses URLDecoder, `+` -> space)
+        // can't corrupt the name on import.
+        let link = to_uri_with_name(&profile, Some("C++"));
+        assert!(
+            link.ends_with("#C%2B%2B"),
+            "a literal + is percent-encoded: {link}",
+        );
+        assert_eq!(
+            name_from_uri(&link),
+            Some("C++".to_string()),
+            "the + name round-trips",
         );
 
         // An empty/whitespace name emits no fragment (matches `to_uri`).
