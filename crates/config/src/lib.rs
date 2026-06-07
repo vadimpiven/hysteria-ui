@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 use form_urlencoded::Serializer;
 use percent_encoding::AsciiSet;
+use percent_encoding::CONTROLS;
 use percent_encoding::NON_ALPHANUMERIC;
 use percent_encoding::percent_decode_str;
 use percent_encoding::utf8_percent_encode;
@@ -32,33 +33,20 @@ const USERINFO: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
-/// Characters kept unescaped in the `#fragment` (the display name): the RFC 3986
-/// `fragment` set (`pchar` / `/` / `?`), so a name like `Work: NYC!` stays
-/// readable as `Work:%20NYC!` rather than over-escaping `:`/`!`/`@`. `#` is not
-/// in the set, so a literal `#` in a name is still encoded.
-const FRAGMENT: &AsciiSet = &NON_ALPHANUMERIC
-    // unreserved
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~')
-    // sub-delims
-    .remove(b'!')
-    .remove(b'$')
-    .remove(b'&')
-    .remove(b'\'')
-    .remove(b'(')
-    .remove(b')')
-    .remove(b'*')
-    .remove(b'+')
-    .remove(b',')
-    .remove(b';')
-    .remove(b'=')
-    // pchar extras, plus `/` and `?` allowed in a fragment
-    .remove(b':')
-    .remove(b'@')
-    .remove(b'/')
-    .remove(b'?');
+/// Percent-encode set for the `#fragment` (the display name): the URL Standard
+/// fragment set (as in the `percent-encoding` docs), plus `%` and `#`. The crate
+/// always escapes non-ASCII, so a name stays a clean ASCII link while readable
+/// punctuation like `:`/`!` is kept literal (`Work: NYC!` → `Work:%20NYC!`); `%`
+/// is escaped so a literal `%` survives [`name_from_uri`]'s decode, and `#` so it
+/// cannot be taken as the fragment delimiter.
+const FRAGMENT: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'<')
+    .add(b'>')
+    .add(b'`')
+    .add(b'%')
+    .add(b'#');
 
 /// Parse a `hysteria2://` (or `hy2://`) link into a [`Profile`]. Returns `None`
 /// if `s` is not such a link (a non-matching scheme, or no host), mirroring the
