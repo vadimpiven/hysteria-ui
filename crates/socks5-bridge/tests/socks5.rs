@@ -26,7 +26,9 @@ use rustls::RootCertStore;
 use rustls::crypto::aws_lc_rs::default_provider;
 use rustls::version::TLS13;
 use rustls_native_certs::load_native_certs;
+use rustls_pki_types::CertificateDer;
 use rustls_pki_types::ServerName;
+use rustls_pki_types::pem::PemObject as _;
 use tokio::io::AsyncBufReadExt as _;
 use tokio::io::AsyncReadExt as _;
 use tokio::io::AsyncWriteExt as _;
@@ -41,21 +43,13 @@ use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use tokio_socks::tcp::Socks5Stream;
 
-fn parse_pin(s: &str) -> Result<[u8; 32]> {
-    let bytes = s
-        .split(':')
-        .map(|h| u8::from_str_radix(h, 16))
-        .collect::<Result<Vec<u8>, _>>()
-        .context("invalid pin hex")?;
-    bytes.try_into().map_err(|_| anyhow!("pin is not 32 bytes"))
-}
-
 fn client_config(cfg: &common::HysteriaClientConfig) -> Result<Config> {
+    // Path is reported by our own test harness (trusted), not user input.
+    let pem = std::fs::read(&cfg.ca_cert_path).context("read reference server cert")?; // nosemgrep
+    let cert = CertificateDer::from_pem_slice(&pem).map_err(|e| anyhow!("parse cert: {e}"))?;
     let tls = TlsConfig {
         server_name: cfg.sni.clone(),
-        insecure: cfg.insecure,
-        pin_sha256: Some(parse_pin(&cfg.pin_sha256)?),
-        ca: None,
+        ca: Some(cert.as_ref().to_vec()),
     };
     Ok(Config::new(
         cfg.server.parse().context("server addr")?,
@@ -110,19 +104,20 @@ fn push_v4(buf: &mut Vec<u8>, addr: SocketAddr) -> Result<()> {
 /// (kept alive; killed on drop).
 async fn spawn_bridge_binary(server: &HysteriaServer) -> Result<(SocketAddr, Child)> {
     let cfg = server.config();
-    // Drive the binary through its public surface: a `hysteria2://` link.
-    let mut url = format!(
-        "hysteria2://{auth}@{server}/?sni={sni}&pinSHA256={pin}",
+    // Drive the binary through its public surface: a `hysteria2://` link, plus
+    // `--ca` to trust the reference server's self-signed cert.
+    let url = format!(
+        "hysteria2://{auth}@{server}/?sni={sni}",
         auth = cfg.auth,
         server = cfg.server,
         sni = cfg.sni,
-        pin = cfg.pin_sha256,
     );
-    if cfg.insecure {
-        url.push_str("&insecure=1");
-    }
+    let ca = cfg
+        .ca_cert_path
+        .to_str()
+        .context("cert path is not UTF-8")?;
     let mut child = Command::new(env!("CARGO_BIN_EXE_socks5-bridge"))
-        .args(["--socks5", "127.0.0.1:0", "--url", &url])
+        .args(["--socks5", "127.0.0.1:0", "--url", &url, "--ca", ca])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true)

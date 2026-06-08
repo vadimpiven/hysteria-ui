@@ -50,13 +50,9 @@ pub struct HysteriaClientConfig {
     pub auth: String,
     /// TLS server name (the cert's CN/SAN).
     pub sni: String,
-    /// Self-signed cert ⇒ pin instead of CA trust.
-    pub insecure: bool,
-    /// SHA-256 fingerprint of the server cert, colon-hex (the `pinSHA256` link param).
-    #[serde(rename = "pinSHA256")]
-    pub pin_sha256: String,
-    /// Base64-encoded PEM of the self-signed cert, for the CA-trust path.
-    pub ca_cert: String,
+    /// Path to the self-signed cert (PEM), trusted via the CA path since it is
+    /// not publicly rooted.
+    pub ca_cert_path: PathBuf,
     /// Present only when the server config enables obfuscation.
     pub obfs: Option<ClientObfs>,
 }

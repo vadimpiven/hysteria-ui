@@ -16,6 +16,7 @@
 
 use std::net::IpAddr;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -31,6 +32,8 @@ use fast_socks5::server::Socks5ServerProtocol;
 use fast_socks5::server::states::CommandRead;
 use hysteria::client::Client;
 use hysteria::client::config::Config;
+use rustls_pki_types::CertificateDer;
+use rustls_pki_types::pem::PemObject as _;
 use tokio::io::AsyncReadExt as _;
 use tokio::io::copy_bidirectional;
 use tokio::net::TcpListener;
@@ -47,16 +50,28 @@ pub struct Cli {
     /// Hysteria 2 connection link (`hysteria2://auth@host:port/?params`).
     #[arg(long, value_name = "URL")]
     pub url: String,
+    /// PEM file with a CA certificate to trust instead of the OS trust store —
+    /// for a server with a private or self-signed certificate.
+    #[arg(long, value_name = "PATH")]
+    pub ca: Option<PathBuf>,
 }
 
 impl Cli {
     /// Split into the SOCKS5 listen address and the hysteria client config,
     /// parsing the `hysteria2://` link into a `profile::Profile` (via the
-    /// `config` crate) and building the client config from it.
+    /// `config` crate) and building the client config from it. A `--ca` file, if
+    /// given, replaces OS-trust-store verification with that single certificate.
     pub fn into_parts(self) -> Result<(SocketAddr, Config)> {
         let profile = config::parse_uri(&self.url)
             .ok_or_else(|| anyhow!("not a hysteria2:// link: {}", self.url))?;
-        let config = Config::from_profile(&profile).context("build client config from link")?;
+        let mut config = Config::from_profile(&profile).context("build client config from link")?;
+        if let Some(ca_path) = &self.ca {
+            let pem = std::fs::read(ca_path)
+                .with_context(|| format!("read CA cert {}", ca_path.display()))?;
+            let cert = CertificateDer::from_pem_slice(&pem)
+                .map_err(|e| anyhow!("parse CA cert {}: {e}", ca_path.display()))?;
+            config.tls.ca = Some(cert.as_ref().to_vec());
+        }
         Ok((self.socks5, config))
     }
 }
@@ -231,7 +246,7 @@ mod tests {
             "--socks5",
             "127.0.0.1:1080",
             "--url",
-            "hysteria2://secret@10.0.0.1:443/?obfs=salamander&obfs-password=pw&sni=example.com&insecure=1",
+            "hysteria2://secret@10.0.0.1:443/?obfs=salamander&obfs-password=pw&sni=example.com",
         ])?;
         let (listen, config) = cli.into_parts()?;
         assert_eq!(listen, "127.0.0.1:1080".parse()?, "listen address");
@@ -242,7 +257,7 @@ mod tests {
         );
         assert_eq!(config.auth, "secret", "auth");
         assert_eq!(config.tls.server_name, "example.com", "sni");
-        assert!(config.tls.insecure, "insecure flag");
+        assert!(config.tls.ca.is_none(), "no --ca ⇒ OS trust store");
         assert_eq!(config.obfs, Some(b"pw".to_vec()), "obfs psk");
         Ok(())
     }

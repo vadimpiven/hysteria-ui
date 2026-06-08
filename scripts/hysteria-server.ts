@@ -17,7 +17,7 @@
 // the temporary cert/config directory is removed.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID, X509Certificate } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { fstatSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -58,12 +58,9 @@ interface ClientConfig {
   auth: string;
   /** TLS server name (the cert's CN/SAN). */
   sni: string;
-  /** Self-signed cert ⇒ pin instead of CA trust. */
-  insecure: boolean;
-  /** SHA-256 fingerprint of the server cert, colon-hex (the `pinSHA256` link param). */
-  pinSHA256: string;
-  /** Base64-encoded PEM of the self-signed cert, for the CA-trust path. */
-  caCert: string;
+  /** Path to the self-signed cert (PEM), trusted via the CA path since the cert
+   * is not publicly rooted. */
+  caCertPath: string;
   /** Present only when the server config enables obfuscation. */
   obfs: ClientObfs | null;
 }
@@ -138,7 +135,12 @@ async function writeServerFiles({
   port: number;
   cert: string;
   key: string;
-}): Promise<{ config: ServerConfig; configPath: string; cleanup: () => Promise<void> }> {
+}): Promise<{
+  config: ServerConfig;
+  configPath: string;
+  certPath: string;
+  cleanup: () => Promise<void>;
+}> {
   const workDir = await mkdtemp(join(tmpdir(), "hysteria-server-"));
   const certPath = join(workDir, "cert.pem");
   const keyPath = join(workDir, "key.pem");
@@ -159,28 +161,27 @@ async function writeServerFiles({
 
   const cleanup = (): Promise<void> => rm(workDir, { recursive: true, force: true });
 
-  return { config, configPath, cleanup };
+  return { config, configPath, certPath, cleanup };
 }
 
-/** Derive the client config from the effective server config and the cert. */
+/** Derive the client config from the effective server config and cert path. */
 function deriveClientConfig({
   config,
   port,
-  cert,
+  certPath,
 }: {
   config: ServerConfig;
   port: number;
-  cert: string;
+  certPath: string;
 }): ClientConfig {
   const auth = config.auth?.password ?? "";
-  const pinSHA256 = new X509Certificate(cert).fingerprint256;
 
   const obfs: ClientObfs | null =
     config.obfs?.type === "salamander"
       ? { type: "salamander", password: config.obfs.salamander?.password ?? "" }
       : null;
 
-  const params = new URLSearchParams({ sni: SNI, insecure: "1", pinSHA256 });
+  const params = new URLSearchParams({ sni: SNI });
   if (obfs !== null) {
     params.set("obfs", "salamander");
     params.set("obfs-password", obfs.password);
@@ -193,9 +194,7 @@ function deriveClientConfig({
     port,
     auth,
     sni: SNI,
-    insecure: true,
-    pinSHA256,
-    caCert: Buffer.from(cert, "utf8").toString("base64"),
+    caCertPath: certPath,
     obfs,
   };
 }
@@ -278,13 +277,13 @@ runScript("Hysteria server", async () => {
   const { cert, key } = await generateCertificate();
   const port = await pickFreePort();
 
-  const { config, configPath, cleanup } = await writeServerFiles({
+  const { config, configPath, certPath, cleanup } = await writeServerFiles({
     provided,
     port,
     cert,
     key,
   });
-  const clientConfig = deriveClientConfig({ config, port, cert });
+  const clientConfig = deriveClientConfig({ config, port, certPath });
 
   const child = spawn("hysteria", ["server", "-c", configPath, "--log-level", "info"], {
     stdio: ["ignore", "ignore", "pipe"],

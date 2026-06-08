@@ -33,9 +33,7 @@ async fn server_starts_and_returns_client_config() -> Result<()> {
         "loopback server address"
     );
     assert_eq!(config.sni, "localhost", "SNI matches the generated cert");
-    assert!(config.insecure, "self-signed cert ⇒ insecure pin path");
-    assert!(!config.pin_sha256.is_empty(), "cert pin was computed");
-    assert!(!config.ca_cert.is_empty(), "CA cert was returned");
+    assert!(config.ca_cert_path.is_file(), "cert PEM path was returned");
     assert!(
         config.url.starts_with("hysteria2://"),
         "client URL is a hysteria2 link: {}",

@@ -1,8 +1,9 @@
 //! The connect-error enum: the single, secret-free diagnostic channel for the
 //! tunnel.
 //!
-//! A dependency-free leaf crate. The privileged tunnel/extension — which must
-//! not link the app's `model` crate — produces a [`ConnError`] on connect
+//! A leaf crate (only `thiserror`, a build-time derive). The privileged
+//! tunnel/extension — which must not link the app's `model` crate — produces a
+//! [`ConnError`] on connect
 //! failure and relays it up; both `hysteria`/`tunnel` and `model` depend on this
 //! crate, neither on the other. It carries no server address or other secret, so
 //! it is safe to cross the FFI boundary, where it is
@@ -17,27 +18,30 @@
 //! assert_eq!(ConnError::from_code(999), ConnError::Unknown);
 //! ```
 
-use std::error::Error;
-use std::fmt;
-
 /// A categorized, secret-free reason a connection attempt failed.
 ///
 /// The integer values are a stable wire contract (the FFI diagnostic code) and
-/// must not be renumbered; add new variants with new codes instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// must not be renumbered; add new variants with new codes instead. The
+/// `#[error]` strings are short, stable, secret-free descriptions (for
+/// logs/tests); the user-facing sentence is `model`'s responsibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, thiserror::Error)]
 #[repr(i32)]
 pub enum ConnError {
     /// Catch-all / unmapped failure. Also the default and the fallback for any
     /// unrecognized [`code`](ConnError::from_code).
     #[default]
+    #[error("unknown error")]
     Unknown = 0,
     /// The server rejected our credentials.
+    #[error("authentication failed")]
     AuthFailed = 1,
-    /// The server could not be reached (DNS/route/refused).
+    /// The server could not be reached (DNS/route/refused). Also covers a
+    /// rejected server certificate, which the QUIC layer does not surface
+    /// separately. Code 3 is retired (was the cert-pin mismatch).
+    #[error("server unreachable")]
     ServerUnreachable = 2,
-    /// The server certificate did not match the pinned `pinSHA256`.
-    TlsPinMismatch = 3,
     /// The connection attempt timed out.
+    #[error("connection timed out")]
     Timeout = 4,
 }
 
@@ -55,33 +59,11 @@ impl ConnError {
         match code {
             1 => Self::AuthFailed,
             2 => Self::ServerUnreachable,
-            3 => Self::TlsPinMismatch,
             4 => Self::Timeout,
             _ => Self::Unknown,
         }
     }
-
-    /// A short, stable, secret-free description (for logs/tests). The
-    /// user-facing sentence is `model`'s responsibility, not this leaf's.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Unknown => "unknown error",
-            Self::AuthFailed => "authentication failed",
-            Self::ServerUnreachable => "server unreachable",
-            Self::TlsPinMismatch => "TLS certificate pin mismatch",
-            Self::Timeout => "connection timed out",
-        }
-    }
 }
-
-impl fmt::Display for ConnError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl Error for ConnError {}
 
 #[cfg(test)]
 mod tests {
@@ -89,11 +71,10 @@ mod tests {
 
     use super::*;
 
-    const ALL: [ConnError; 5] = [
+    const ALL: [ConnError; 4] = [
         ConnError::Unknown,
         ConnError::AuthFailed,
         ConnError::ServerUnreachable,
-        ConnError::TlsPinMismatch,
         ConnError::Timeout,
     ];
 
@@ -110,7 +91,7 @@ mod tests {
 
     #[test]
     fn unrecognized_codes_map_to_unknown() {
-        for code in [-1, 5, 42, i32::MAX, i32::MIN] {
+        for code in [-1, 3, 5, 42, i32::MAX, i32::MIN] {
             assert_eq!(
                 ConnError::from_code(code),
                 ConnError::Unknown,
@@ -129,8 +110,7 @@ mod tests {
             2,
             "ServerUnreachable code"
         );
-        assert_eq!(ConnError::TlsPinMismatch.code(), 3, "TlsPinMismatch code");
-        assert_eq!(ConnError::Timeout.code(), 4, "Timeout code");
+        assert_eq!(ConnError::Timeout.code(), 4, "Timeout code (3 retired)");
     }
 
     #[test]
@@ -143,13 +123,22 @@ mod tests {
     }
 
     #[test]
-    fn display_matches_as_str() {
-        for err in ALL {
-            assert_eq!(
-                err.to_string(),
-                err.as_str(),
-                "Display matches as_str: {err}"
-            );
-        }
+    fn display_strings_are_stable() {
+        assert_eq!(ConnError::Unknown.to_string(), "unknown error", "Unknown");
+        assert_eq!(
+            ConnError::AuthFailed.to_string(),
+            "authentication failed",
+            "AuthFailed"
+        );
+        assert_eq!(
+            ConnError::ServerUnreachable.to_string(),
+            "server unreachable",
+            "ServerUnreachable"
+        );
+        assert_eq!(
+            ConnError::Timeout.to_string(),
+            "connection timed out",
+            "Timeout"
+        );
     }
 }
