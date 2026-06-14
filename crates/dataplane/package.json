@@ -1,5 +1,5 @@
 {
-  "name": "tunnel",
+  "name": "dataplane",
   "private": true,
   "scripts": {
     "test:nextest": "node ../../scripts/test-nextest.ts",

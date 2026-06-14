@@ -1,9 +1,9 @@
 //! A dev TUN front-end over the Hysteria 2 client.
 //!
 //! Opens a macOS `utun` via `tun-rs` (no `NetworkExtension`, no FFI), connects the
-//! `hysteria` client from a `hysteria2://` link, and drives the `tunnel`
-//! netstack so traffic routed into the TUN is proxied. The TUN counterpart to
-//! `socks5-bridge`; never linked into the shipped FFI libraries.
+//! `hysteria` client from a `hysteria2://` link, and drives the `dataplane`
+//! over the netstack so traffic routed into the TUN is proxied. The TUN
+//! counterpart to `transport-socks5`; never linked into the shipped FFI libraries.
 //!
 //! Steering traffic into the TUN (adding routes) needs root and is done
 //! out-of-band; this binary only opens the device and runs the netstack.
@@ -23,7 +23,7 @@ use hysteria::client::Client;
 use hysteria::client::config::Config;
 use tun_rs::DeviceBuilder;
 
-/// `tun-bridge` command-line arguments.
+/// `transport-tun` command-line arguments.
 #[derive(Parser, Debug)]
 #[command(about = "Dev TUN proxy over the Hysteria 2 client")]
 pub struct Cli {
@@ -77,12 +77,12 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     // The netstack is transparent (it forwards any destination); the TUN's own
     // addresses are configured on the device above, not here.
-    let netstack = tunnel::Config::new(usize::from(cli.mtu));
+    let netstack = dataplane::Config::new(usize::from(cli.mtu));
 
-    // Production wires the OS-provided fd into `tunnel::spawn` from `ffi-ext`
+    // Production wires the OS-provided fd into `dataplane::spawn` from `ffi-ext`
     // (which wraps it via `unsafe AsyncDevice::from_fd`); here we drive the same
     // handle API over a self-opened utun, tearing down gracefully on Ctrl-C.
-    let handle = tunnel::spawn(device, Arc::new(client), netstack)?;
+    let handle = dataplane::spawn(device, Arc::new(client), netstack)?;
     eprintln!("connected; press Ctrl-C to disconnect");
     tokio::signal::ctrl_c().await.context("await Ctrl-C")?;
     eprintln!("disconnecting…");
@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     fn cli_parses_defaults() -> Result<()> {
-        let cli = Cli::try_parse_from(["tun-bridge", "--url", "hysteria2://a@h:443/"])?;
+        let cli = Cli::try_parse_from(["transport-tun", "--url", "hysteria2://a@h:443/"])?;
         assert_eq!(cli.tun_addr, Ipv4Addr::new(10, 0, 0, 1), "default TUN addr");
         assert_eq!(cli.tun_prefix, 24, "default prefix");
         assert_eq!(cli.mtu, 1500, "default MTU");

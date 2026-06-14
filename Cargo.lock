@@ -359,6 +359,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataplane"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "hysteria",
+ "netstack-smoltcp-socket",
+ "pretty_assertions",
+ "tokio",
+]
+
+[[package]]
 name = "defmt"
 version = "0.3.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1014,6 +1025,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "netstack-smoltcp-socket"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "netstack-smoltcp",
+ "tokio",
+ "tun-rs",
+]
+
+[[package]]
 name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1590,26 +1612,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "socks5-bridge"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "config",
- "fast-socks5",
- "hysteria",
- "pretty_assertions",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "tokio-socks",
-]
-
-[[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1834,17 +1836,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "tun-bridge"
+name = "transport-socks5"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
  "config",
+ "fast-socks5",
+ "hysteria",
+ "pretty_assertions",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tokio-socks",
+]
+
+[[package]]
+name = "transport-tun"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "config",
+ "dataplane",
  "hysteria",
  "pretty_assertions",
  "tokio",
  "tun-rs",
- "tunnel",
 ]
 
 [[package]]
@@ -1871,19 +1893,6 @@ dependencies = [
  "widestring",
  "windows-sys 0.61.2",
  "winreg",
-]
-
-[[package]]
-name = "tunnel"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "futures",
- "hysteria",
- "netstack-smoltcp",
- "pretty_assertions",
- "tokio",
- "tun-rs",
 ]
 
 [[package]]

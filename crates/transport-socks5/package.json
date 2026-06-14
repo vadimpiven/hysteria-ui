@@ -1,5 +1,5 @@
 {
-  "name": "socks5-bridge",
+  "name": "transport-socks5",
   "private": true,
   "scripts": {
     "test:nextest": "node ../../scripts/test-nextest.ts",

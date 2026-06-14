@@ -501,12 +501,12 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/conn-error --if-present run ci-build'
 sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
 
-[tasks."ci-build:socks5-bridge"]
-description = "Build socks5-bridge crate for CI"
+[tasks."ci-build:transport-socks5"]
+description = "Build transport-socks5 crate for CI"
 hide = true
 depends = ["setup:rust", "setup:pnpm"]
-run = 'pnpm -C crates/socks5-bridge --if-present run ci-build'
-sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/transport-socks5 --if-present run ci-build'
+sources = ["crates/transport-socks5/**/*", "Cargo.{toml,lock}"]
 
 [tasks."ci-build:hysteria"]
 description = "Build hysteria crate for CI"
@@ -522,19 +522,26 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/profile --if-present run ci-build'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
-[tasks."ci-build:tunnel"]
-description = "Build tunnel crate for CI"
+[tasks."ci-build:netstack-smoltcp-socket"]
+description = "Build netstack-smoltcp-socket crate for CI"
 hide = true
 depends = ["setup:rust", "setup:pnpm"]
-run = 'pnpm -C crates/tunnel --if-present run ci-build'
-sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/netstack-smoltcp-socket --if-present run ci-build'
+sources = ["crates/netstack-smoltcp-socket/**/*", "Cargo.{toml,lock}"]
 
-[tasks."ci-build:tun-bridge"]
-description = "Build tun-bridge crate for CI"
+[tasks."ci-build:dataplane"]
+description = "Build dataplane crate for CI"
 hide = true
 depends = ["setup:rust", "setup:pnpm"]
-run = 'pnpm -C crates/tun-bridge --if-present run ci-build'
-sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/dataplane --if-present run ci-build'
+sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-build:transport-tun"]
+description = "Build transport-tun crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/transport-tun --if-present run ci-build'
+sources = ["crates/transport-tun/**/*", "Cargo.{toml,lock}"]
 
 [tasks."ci-build"]
 description = "Build all crates for CI"
@@ -542,11 +549,12 @@ hide = true
 depends = [
     "ci-build:config",
     "ci-build:conn-error",
-    "ci-build:socks5-bridge",
+    "ci-build:transport-socks5",
     "ci-build:hysteria",
     "ci-build:profile",
-    "ci-build:tunnel",
-    "ci-build:tun-bridge",
+    "ci-build:netstack-smoltcp-socket",
+    "ci-build:dataplane",
+    "ci-build:transport-tun",
 ]
 
 # --- CI Test tasks ---
@@ -564,12 +572,12 @@ depends = ["check"]
 run = 'pnpm -C crates/conn-error --if-present run ci-test'
 sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
 
-[tasks."ci-test:socks5-bridge"]
-description = "Run CI tests for socks5-bridge crate"
+[tasks."ci-test:transport-socks5"]
+description = "Run CI tests for transport-socks5 crate"
 hide = true
 depends = ["check"]
-run = 'pnpm -C crates/socks5-bridge --if-present run ci-test'
-sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/transport-socks5 --if-present run ci-test'
+sources = ["crates/transport-socks5/**/*", "Cargo.{toml,lock}"]
 
 [tasks."ci-test:hysteria"]
 description = "Run CI tests for hysteria crate"
@@ -585,19 +593,26 @@ depends = ["check"]
 run = 'pnpm -C crates/profile --if-present run ci-test'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
-[tasks."ci-test:tunnel"]
-description = "Run CI tests for tunnel crate"
+[tasks."ci-test:netstack-smoltcp-socket"]
+description = "Run CI tests for netstack-smoltcp-socket crate"
 hide = true
 depends = ["check"]
-run = 'pnpm -C crates/tunnel --if-present run ci-test'
-sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/netstack-smoltcp-socket --if-present run ci-test'
+sources = ["crates/netstack-smoltcp-socket/**/*", "Cargo.{toml,lock}"]
 
-[tasks."ci-test:tun-bridge"]
-description = "Run CI tests for tun-bridge crate"
+[tasks."ci-test:dataplane"]
+description = "Run CI tests for dataplane crate"
 hide = true
 depends = ["check"]
-run = 'pnpm -C crates/tun-bridge --if-present run ci-test'
-sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/dataplane --if-present run ci-test'
+sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test:transport-tun"]
+description = "Run CI tests for transport-tun crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/transport-tun --if-present run ci-test'
+sources = ["crates/transport-tun/**/*", "Cargo.{toml,lock}"]
 
 [tasks."ci-test"]
 description = "Run all CI tests"
@@ -605,11 +620,12 @@ hide = true
 depends = [
     "ci-test:config",
     "ci-test:conn-error",
-    "ci-test:socks5-bridge",
+    "ci-test:transport-socks5",
     "ci-test:hysteria",
     "ci-test:profile",
-    "ci-test:tunnel",
-    "ci-test:tun-bridge",
+    "ci-test:netstack-smoltcp-socket",
+    "ci-test:dataplane",
+    "ci-test:transport-tun",
 ]
 
 # --- Build tasks ---
@@ -627,12 +643,12 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/conn-error --if-present run build'
 sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
 
-[tasks."build:socks5-bridge"]
-description = "Build socks5-bridge crate"
+[tasks."build:transport-socks5"]
+description = "Build transport-socks5 crate"
 hide = true
 depends = ["setup:rust", "setup:pnpm"]
-run = 'pnpm -C crates/socks5-bridge --if-present run build'
-sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/transport-socks5 --if-present run build'
+sources = ["crates/transport-socks5/**/*", "Cargo.{toml,lock}"]
 
 [tasks."build:hysteria"]
 description = "Build hysteria crate"
@@ -648,19 +664,26 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/profile --if-present run build'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
-[tasks."build:tunnel"]
-description = "Build tunnel crate"
+[tasks."build:netstack-smoltcp-socket"]
+description = "Build netstack-smoltcp-socket crate"
 hide = true
 depends = ["setup:rust", "setup:pnpm"]
-run = 'pnpm -C crates/tunnel --if-present run build'
-sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/netstack-smoltcp-socket --if-present run build'
+sources = ["crates/netstack-smoltcp-socket/**/*", "Cargo.{toml,lock}"]
 
-[tasks."build:tun-bridge"]
-description = "Build tun-bridge crate"
+[tasks."build:dataplane"]
+description = "Build dataplane crate"
 hide = true
 depends = ["setup:rust", "setup:pnpm"]
-run = 'pnpm -C crates/tun-bridge --if-present run build'
-sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/dataplane --if-present run build'
+sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
+
+[tasks."build:transport-tun"]
+description = "Build transport-tun crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/transport-tun --if-present run build'
+sources = ["crates/transport-tun/**/*", "Cargo.{toml,lock}"]
 
 [tasks.build]
 description = "Compile all crates"
@@ -668,11 +691,12 @@ alias = "b"
 depends = [
     "build:config",
     "build:conn-error",
-    "build:socks5-bridge",
+    "build:transport-socks5",
     "build:hysteria",
     "build:profile",
-    "build:tunnel",
-    "build:tun-bridge",
+    "build:netstack-smoltcp-socket",
+    "build:dataplane",
+    "build:transport-tun",
 ]
 
 # --- Test tasks ---
@@ -690,12 +714,12 @@ depends = ["fix"]
 run = 'pnpm -C crates/conn-error --if-present run test'
 sources = ["crates/conn-error/**/*", "Cargo.{toml,lock}"]
 
-[tasks."test:socks5-bridge"]
-description = "Run tests for socks5-bridge crate"
+[tasks."test:transport-socks5"]
+description = "Run tests for transport-socks5 crate"
 hide = true
 depends = ["fix"]
-run = 'pnpm -C crates/socks5-bridge --if-present run test'
-sources = ["crates/socks5-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/transport-socks5 --if-present run test'
+sources = ["crates/transport-socks5/**/*", "Cargo.{toml,lock}"]
 
 [tasks."test:hysteria"]
 description = "Run tests for hysteria crate"
@@ -711,19 +735,26 @@ depends = ["fix"]
 run = 'pnpm -C crates/profile --if-present run test'
 sources = ["crates/profile/**/*", "Cargo.{toml,lock}"]
 
-[tasks."test:tunnel"]
-description = "Run tests for tunnel crate"
+[tasks."test:netstack-smoltcp-socket"]
+description = "Run tests for netstack-smoltcp-socket crate"
 hide = true
 depends = ["fix"]
-run = 'pnpm -C crates/tunnel --if-present run test'
-sources = ["crates/tunnel/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/netstack-smoltcp-socket --if-present run test'
+sources = ["crates/netstack-smoltcp-socket/**/*", "Cargo.{toml,lock}"]
 
-[tasks."test:tun-bridge"]
-description = "Run tests for tun-bridge crate"
+[tasks."test:dataplane"]
+description = "Run tests for dataplane crate"
 hide = true
 depends = ["fix"]
-run = 'pnpm -C crates/tun-bridge --if-present run test'
-sources = ["crates/tun-bridge/**/*", "Cargo.{toml,lock}"]
+run = 'pnpm -C crates/dataplane --if-present run test'
+sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
+
+[tasks."test:transport-tun"]
+description = "Run tests for transport-tun crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/transport-tun --if-present run test'
+sources = ["crates/transport-tun/**/*", "Cargo.{toml,lock}"]
 
 [tasks.test]
 description = "Run all tests"
@@ -731,11 +762,12 @@ alias = "t"
 depends = [
     "test:config",
     "test:conn-error",
-    "test:socks5-bridge",
+    "test:transport-socks5",
     "test:hysteria",
     "test:profile",
-    "test:tunnel",
-    "test:tun-bridge",
+    "test:netstack-smoltcp-socket",
+    "test:dataplane",
+    "test:transport-tun",
 ]
 
 # ============================================================================

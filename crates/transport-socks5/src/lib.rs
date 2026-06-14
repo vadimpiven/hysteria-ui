@@ -40,7 +40,7 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::net::UdpSocket;
 
-/// `socks5-bridge` command-line arguments.
+/// `transport-socks5` command-line arguments.
 #[derive(Parser, Debug)]
 #[command(about = "Dev-only SOCKS5 proxy over the Hysteria 2 client")]
 pub struct Cli {
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn cli_into_parts_parses_link() -> Result<()> {
         let cli = Cli::try_parse_from([
-            "socks5-bridge",
+            "transport-socks5",
             "--socks5",
             "127.0.0.1:1080",
             "--url",
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn cli_into_parts_rejects_non_link() -> Result<()> {
         let cli = Cli::try_parse_from([
-            "socks5-bridge",
+            "transport-socks5",
             "--socks5",
             "127.0.0.1:1080",
             "--url",

@@ -70,15 +70,17 @@ importers:
 
   crates/conn-error: {}
 
+  crates/dataplane: {}
+
   crates/hysteria: {}
+
+  crates/netstack-smoltcp-socket: {}
 
   crates/profile: {}
 
-  crates/socks5-bridge: {}
+  crates/transport-socks5: {}
 
-  crates/tun-bridge: {}
-
-  crates/tunnel: {}
+  crates/transport-tun: {}
 
 packages:
 

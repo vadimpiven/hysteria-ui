@@ -1,17 +1,17 @@
-//! Userspace TUN netstack that drives the Hysteria 2 client.
+//! The dataplane: relay every flow the netstack accepts through the Hysteria 2
+//! client.
 //!
-//! Bridges a TUN device (raw IP packets) to the `hysteria` client. The userspace
-//! netstack is `netstack-smoltcp`: it accepts each flow from the TUN's packets
-//! and hands back an async TCP stream (with the original destination) or UDP
-//! datagrams, which we relay through the client. We own the relay tasks and the
-//! per-source UDP NAT (the `session` module, generic over its `Upstream`/
-//! `Downstream` seams so it carries no tunnel type); packet parsing, socket
-//! lifecycle, and flow detection live in the netstack crate.
+//! The userspace netstack lives below us in `netstack-smoltcp-socket`: given a TUN
+//! device it hands back accepted async TCP streams (each with its original
+//! destination) and UDP datagrams. We relay those through the `hysteria` client,
+//! owning the relay tasks and the per-source UDP NAT (the `session` module, generic
+//! over its `Upstream`/`Downstream` seams so it carries no transport type). Packet
+//! parsing, socket lifecycle, and flow detection all live in the netstack crate.
 //!
 //! The device is supplied by the caller as an [`AsyncDevice`] (the OS-provided fd
-//! behind the FFI extension, or a utun in the `tun-bridge` dev harness). [`spawn`]
-//! returns a [`Handle`] for live [`Stats`] and graceful shutdown; [`run`] is the
-//! blocking convenience used by the dev harness.
+//! behind the FFI extension, or a utun in the `transport-tun` dev harness).
+//! [`spawn`] returns a [`Handle`] for live [`Stats`] and graceful shutdown; [`run`]
+//! is the blocking convenience used by the dev harness.
 
 mod count;
 mod session;
@@ -25,23 +25,15 @@ use std::time::Instant;
 
 use anyhow::Context as _;
 use anyhow::Result;
-use anyhow::anyhow;
-use futures::SinkExt as _;
-use futures::StreamExt as _;
 use hysteria::client::Client;
-use netstack_smoltcp::Runner;
-use netstack_smoltcp::Stack;
-use netstack_smoltcp::StackBuilder;
-use netstack_smoltcp::TcpListener;
-use netstack_smoltcp::TcpStream;
-use netstack_smoltcp::UdpSocket;
+use netstack_smoltcp_socket as socket;
+use netstack_smoltcp_socket::AsyncDevice;
+use netstack_smoltcp_socket::TcpStream;
 use tokio::io::copy_bidirectional;
 use tokio::sync::Semaphore;
-use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::task::JoinSet;
-use tun_rs::AsyncDevice;
 
 use crate::count::Counting;
 use crate::session::Downstream;
@@ -53,27 +45,17 @@ const GC_INTERVAL: Duration = Duration::from_secs(30);
 /// Idle UDP sessions are reaped after this long (mirrors the Go TUN handler's
 /// UDP timeout).
 const UDP_IDLE: Duration = Duration::from_mins(5);
-/// Reply channel depth between the session tasks and the UDP writer.
-const REPLY_CHANNEL: usize = 256;
 
 /// The concrete Hysteria UDP session type the NAT map holds.
 type Session = hysteria::client::udp::UdpConn<hysteria::client::transport::QuinnUdpIo>;
 
-/// A reply datagram from a remote back to the app, queued for the UDP writer.
-/// `src` is the app endpoint to deliver to; `from` is the remote it came from,
-/// sent as the reply's source so the app sees an answer from where it asked.
-pub(crate) struct UdpReply {
-    pub(crate) src: SocketAddr,
-    pub(crate) from: SocketAddr,
-    pub(crate) data: Vec<u8>,
-}
-
-/// The tunnel's [`Downstream`]: queues each reply for the UDP writer and tallies
-/// received bytes at the seam. This is where the NAT's caller-owned concerns —
-/// the reply channel and the `rx` counter — live, keeping `session` metric-free.
+/// The dataplane's [`Downstream`]: queues each reply for the netstack's UDP writer
+/// (via the socket crate's [`UdpSender`](socket::UdpSender)) and tallies received
+/// bytes at the seam. This is where the NAT's caller-owned concerns — the reply
+/// sender and the `rx` counter — live, keeping `session` metric-free.
 #[derive(Clone)]
 struct ReplyQueue {
-    reply_tx: mpsc::Sender<UdpReply>,
+    udp: socket::UdpSender,
     /// Bytes received from remotes (server→app), tallied as they arrive.
     rx: Arc<AtomicU64>,
 }
@@ -84,10 +66,7 @@ impl Downstream for ReplyQueue {
             u64::try_from(data.len()).unwrap_or(u64::MAX),
             Ordering::Relaxed,
         );
-        self.reply_tx
-            .send(UdpReply { src, from, data })
-            .await
-            .is_ok()
+        self.udp.send(data, from, src).await
     }
 }
 
@@ -230,33 +209,24 @@ pub fn spawn(device: Arc<AsyncDevice>, client: Arc<Client>, config: Config) -> R
     let counters = Counters::new();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let (stack, runner, udp_socket, tcp_listener) = StackBuilder::default()
-        .enable_tcp(true)
-        .enable_udp(true)
-        .enable_icmp(true)
-        .mtu(config.mtu)
-        .stack_buffer_size(config.limits.stack_buffer)
-        .udp_buffer_size(config.limits.udp_buffer)
-        .tcp_buffer_size(config.limits.tcp_buffer)
-        .build()
-        .context("build netstack")?;
-    // All present because TCP/UDP/ICMP are enabled above; avoid `unwrap`.
-    let runner = runner.ok_or_else(|| anyhow!("netstack runner missing"))?;
-    let udp_socket = udp_socket.ok_or_else(|| anyhow!("netstack UDP socket missing"))?;
-    let tcp_listener = tcp_listener.ok_or_else(|| anyhow!("netstack TCP listener missing"))?;
-
-    let netstack = Netstack {
+    // Project the netstack subset of our config; the `max_*` caps stay here.
+    let sockets = socket::build(
         device,
+        socket::Config {
+            mtu: config.mtu,
+            stack_buffer: config.limits.stack_buffer,
+            udp_buffer: config.limits.udp_buffer,
+            tcp_buffer: config.limits.tcp_buffer,
+        },
+    )?;
+
+    let join = tokio::spawn(orchestrate(
+        sockets,
         client,
-        stack,
-        runner,
-        udp_socket,
-        tcp_listener,
-        counters: counters.clone(),
-        shutdown: shutdown_rx,
+        counters.clone(),
+        shutdown_rx,
         config,
-    };
-    let join = tokio::spawn(orchestrate(netstack));
+    ));
     Ok(Handle {
         join,
         shutdown: shutdown_tx,
@@ -272,123 +242,39 @@ pub async fn run(device: Arc<AsyncDevice>, client: Arc<Client>, config: Config) 
     Ok(())
 }
 
-/// Everything the orchestration task owns.
-struct Netstack {
-    device: Arc<AsyncDevice>,
-    client: Arc<Client>,
-    stack: Stack,
-    runner: Runner,
-    udp_socket: UdpSocket,
-    tcp_listener: TcpListener,
-    counters: Counters,
-    shutdown: watch::Receiver<bool>,
-    config: Config,
-}
-
-/// Drive the netstack: pump packets to/from the TUN, accept TCP flows and relay
-/// them, NAT UDP, and GC idle sessions — until a stream closes or shutdown is
+/// Drive the dataplane: accept TCP flows and relay them, NAT UDP, and GC idle
+/// sessions — until a netstack stream closes, an infra task ends, or shutdown is
 /// signalled, then cancel every task.
-#[expect(
-    clippy::too_many_lines,
-    reason = "netstack setup plus the select loop; the split() halves have \
-              unnameable types, so the loop can't be extracted across a fn boundary"
-)]
-async fn orchestrate(ns: Netstack) {
-    let Netstack {
-        device,
-        client,
-        stack,
-        runner,
-        udp_socket,
-        mut tcp_listener,
-        counters,
-        mut shutdown,
-        config,
-    } = ns;
+async fn orchestrate(
+    sockets: socket::Sockets,
+    client: Arc<Client>,
+    counters: Counters,
+    mut shutdown: watch::Receiver<bool>,
+    config: Config,
+) {
+    let socket::Sockets {
+        mut tcp,
+        mut udp_rx,
+        udp_tx,
+        mut infra,
+    } = sockets;
 
-    let (mut sink, mut stream) = stack.split();
-    let (mut udp_rd, mut udp_wr) = udp_socket.split();
-    let (reply_tx, mut reply_rx) = mpsc::channel::<UdpReply>(REPLY_CHANNEL);
     let replies = ReplyQueue {
-        reply_tx,
+        udp: udp_tx,
         rx: Arc::clone(&counters.rx),
     };
     let mut sessions: Sessions<Session, ReplyQueue> =
         Sessions::new(config.limits.max_udp_sessions, replies, shutdown.clone());
     let semaphore = Arc::new(Semaphore::new(config.limits.max_tcp_flows));
 
-    // Infrastructure tasks (the netstack runner + the TUN<->stack pumps + the UDP
-    // writer); per-flow TCP relays go in their own set so we can reap them.
-    let mut infra: JoinSet<()> = JoinSet::new();
+    // Per-flow TCP relays, in their own set so we can reap them.
     let mut relays: JoinSet<()> = JoinSet::new();
-
-    infra.spawn(async move {
-        let _ = runner.await;
-    });
-
-    // TUN → stack: read IP packets off the device and feed the netstack.
-    {
-        let device = Arc::clone(&device);
-        // Floor the read buffer at a standard frame so a small configured MTU
-        // can't truncate an inbound packet.
-        let mtu = config.mtu.max(1500);
-        infra.spawn(async move {
-            let mut buf = vec![0u8; mtu];
-            loop {
-                let Ok(n) = device.recv(&mut buf).await else {
-                    break;
-                };
-                let Some(slice) = buf.get(..n) else {
-                    continue;
-                };
-                if sink.send(slice.to_vec()).await.is_err() {
-                    break;
-                }
-            }
-        });
-    }
-
-    // stack → TUN: write the netstack's emitted packets back out.
-    {
-        let device = Arc::clone(&device);
-        infra.spawn(async move {
-            while let Some(pkt) = stream.next().await {
-                if let Ok(pkt) = pkt
-                    && device.send(&pkt).await.is_err()
-                {
-                    break;
-                }
-            }
-        });
-    }
-
-    // UDP writer: the single owner of the write half, fed reply datagrams by the
-    // per-session tasks. Sends `(data, from, src)` so the reply's source is the
-    // remote the app addressed.
-    infra.spawn(async move {
-        while let Some(reply) = reply_rx.recv().await {
-            // Spoofing the source needs `from` and `src` in the same address
-            // family; a mismatched pair (not reachable in practice — a session's
-            // replies share the app's family) would make the netstack reject the
-            // send and, via `infra.join_next`, tear the tunnel down. Skip it.
-            if reply.from.is_ipv4() != reply.src.is_ipv4() {
-                continue;
-            }
-            if udp_wr
-                .send((reply.data, reply.from, reply.src))
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-    });
 
     let mut gc = tokio::time::interval(GC_INTERVAL);
     loop {
         tokio::select! {
-            accepted = tcp_listener.next() => {
-                let Some((app, _local, remote)) = accepted else { break };
+            accepted = tcp.accept() => {
+                let Some((app, dst)) = accepted else { break };
                 counters.tcp_flows.fetch_add(1, Ordering::Relaxed);
                 // Cap concurrency: at the limit, drop the flow (the netstack
                 // closes it) rather than hold another per-socket buffer set.
@@ -402,12 +288,12 @@ async fn orchestrate(ns: Netstack) {
                 let errs = Arc::clone(&counters.flow_errors);
                 relays.spawn(async move {
                     let _permit = permit;
-                    if relay_tcp(app, remote, client, tx, rx).await.is_err() {
+                    if relay_tcp(app, dst, client, tx, rx).await.is_err() {
                         errs.fetch_add(1, Ordering::Relaxed);
                     }
                 });
             },
-            inbound = udp_rd.next() => {
+            inbound = udp_rx.recv() => {
                 let Some((data, src, dst)) = inbound else { break };
                 let client = Arc::clone(&client);
                 let len = u64::try_from(data.len()).unwrap_or(u64::MAX);
@@ -435,7 +321,7 @@ async fn orchestrate(ns: Netstack) {
             // An infra task ending (the runner, either TUN pump, or the UDP
             // writer) means the data path is broken — e.g. the device errored —
             // so tear the whole tunnel down rather than stall silently.
-            Some(_) = infra.join_next() => break,
+            () = infra.failed() => break,
             _ = shutdown.changed() => break,
         }
     }
@@ -445,8 +331,7 @@ async fn orchestrate(ns: Netstack) {
     // aborts the per-session receive tasks.
     relays.abort_all();
     while relays.join_next().await.is_some() {}
-    infra.abort_all();
-    while infra.join_next().await.is_some() {}
+    infra.shutdown().await;
 }
 
 /// Splice one accepted TCP flow to a Hysteria tunnel to its original destination,
