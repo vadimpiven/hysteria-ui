@@ -74,8 +74,11 @@ pub(crate) enum Outcome {
     /// the session (so the caller can count newly opened NAT sessions).
     Sent { opened: bool },
     /// Dropped: no session could be opened (UDP disabled or table full) or the
-    /// transport send failed. The caller counts this as a flow error.
-    Dropped,
+    /// transport send failed. The caller counts this as a flow error. `opened` is
+    /// true when the session was freshly created but its *first* send failed: the
+    /// session is still registered (and reaped only when idle), so it must be
+    /// counted just as a successful first send would be.
+    Dropped { opened: bool },
 }
 
 struct Entry<U> {
@@ -159,14 +162,20 @@ impl<U: Upstream, D: Downstream> Sessions<U, D> {
     where
         F: FnOnce() -> Option<Arc<U>>,
     {
-        let opened = !self.map.contains_key(&src);
+        // Snapshot membership *before* creating: a None from `get_or_create`
+        // means nothing was inserted (table full / UDP disabled), so `opened`
+        // there is false; otherwise a fresh insert is an open.
+        let already_open = self.map.contains_key(&src);
         let Some(conn) = self.get_or_create(src, now, create) else {
-            return Outcome::Dropped;
+            return Outcome::Dropped { opened: false };
         };
+        let opened = !already_open;
         if conn.send(data, &dst.to_string()) {
             Outcome::Sent { opened }
         } else {
-            Outcome::Dropped
+            // The session is created and registered even though this first send
+            // failed; it lingers until reaped, so report `opened` to count it.
+            Outcome::Dropped { opened }
         }
     }
 
@@ -252,6 +261,8 @@ mod tests {
     /// An upstream whose `receive` never resolves, so the session task stays alive.
     struct FakeUpstream {
         sent: Mutex<Vec<Datagram>>,
+        /// When true, `send` records the datagram but reports a transport error.
+        fail_send: bool,
     }
 
     impl Upstream for FakeUpstream {
@@ -260,7 +271,7 @@ mod tests {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push((data.to_vec(), addr.to_string()));
-            true
+            !self.fail_send
         }
         async fn receive(&self) -> Option<Datagram> {
             std::future::pending().await
@@ -304,6 +315,14 @@ mod tests {
     fn fake_upstream() -> Option<Arc<FakeUpstream>> {
         Some(Arc::new(FakeUpstream {
             sent: Mutex::new(Vec::new()),
+            fail_send: false,
+        }))
+    }
+
+    fn failing_upstream() -> Option<Arc<FakeUpstream>> {
+        Some(Arc::new(FakeUpstream {
+            sent: Mutex::new(Vec::new()),
+            fail_send: true,
         }))
     }
 
@@ -349,6 +368,7 @@ mod tests {
         let dst: SocketAddr = "1.1.1.1:53".parse()?;
         let relay = Arc::new(FakeUpstream {
             sent: Mutex::new(Vec::new()),
+            fail_send: false,
         });
         let made = Arc::clone(&relay);
 
@@ -375,6 +395,31 @@ mod tests {
                 (b"yo".to_vec(), "1.1.1.1:53".to_string()),
             ],
             "both payloads went to the destination address"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn open_is_reported_even_when_first_send_fails() -> Result<()> {
+        let (mut sessions, _shutdown, _downstream) = harness(usize::MAX);
+        let src: SocketAddr = "10.0.0.2:40000".parse()?;
+        let dst: SocketAddr = "1.1.1.1:53".parse()?;
+
+        // The first datagram opens the session but its send fails. It's dropped,
+        // yet the session is now in the map — so the open must still be reported,
+        // or the session would never be counted (the regression this guards).
+        let first = sessions.forward(src, dst, b"hi", Instant::now(), failing_upstream);
+        assert!(
+            matches!(first, Outcome::Dropped { opened: true }),
+            "a failed first send still reports the session as opened"
+        );
+        assert_eq!(sessions.len(), 1, "the opened session stays in the map");
+
+        // A later datagram reuses that session; a second failure is not a re-open.
+        let again = sessions.forward(src, dst, b"yo", Instant::now(), failing_upstream);
+        assert!(
+            matches!(again, Outcome::Dropped { opened: false }),
+            "reusing an existing session is never reported as a new open"
         );
         Ok(())
     }

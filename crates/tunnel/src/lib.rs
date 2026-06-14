@@ -420,8 +420,13 @@ async fn orchestrate(ns: Netstack) {
                             counters.udp_sessions.fetch_add(1, Ordering::Relaxed);
                         }
                     }
-                    Outcome::Dropped => {
+                    Outcome::Dropped { opened } => {
                         counters.flow_errors.fetch_add(1, Ordering::Relaxed);
+                        // A fresh session whose first send failed is still in the
+                        // map, so count it like any other opened session.
+                        if opened {
+                            counters.udp_sessions.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
             },
