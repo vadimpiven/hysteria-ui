@@ -63,7 +63,8 @@ copyleft); `cargo-deny` enforces that set. The UI runtime is not purely permissi
      store/       JSON doc + SecureStore (secrets)
      conn-error/  connect-error enum (leaf)
      hysteria/    Hysteria 2 client on Quinn: auth + TCP + UDP + Brutal
-     tunnel/      netstack-smoltcp (over smoltcp) + tun-rs fd; drives hysteria/
+     netstack-smoltcp-socket/  socket-style API over smoltcp + tun-rs fd
+     dataplane/   relays flows through hysteria/ (UDP NAT, counters)
      model/       the Model: async actor — snapshots + intents
    ffi-app/  ffi-ext/   two UniFFI components (disjoint deps; the app/ext wall)
                           │  cdylib (Android/JVM) / staticlib (Apple) per target
@@ -150,7 +151,7 @@ NE de-risk (§6, step 3).]
 
 The tunnel runs in a sandboxed extension (macOS NE) or the app process (Android `VpnService`).
 Memory is provisioned, not unbounded: the weight is Quinn's send/receive buffers plus the
-netstack's per-connection buffers. Bound it by capping concurrent flows (`tunnel`'s
+netstack's per-connection buffers. Bound it by capping concurrent flows (`dataplane`'s
 `Limits::max_tcp_flows` / `max_udp_sessions`) and keeping a single-threaded runtime in the
 extension. The binding target for the cap is the low-RAM Android TV box, where an app may be killed
 past a few hundred MB. Validate the tunnel in the macOS NE sandbox at the de-risk gate (§6, step 3)
@@ -243,7 +244,7 @@ TypeScript under `scripts/` remains for the reference-server test harness. A
 the pinned reference server (rev `c3a806b`) under a checksum, generates a self-signed cert (which
 tests trust out of band, since the client verifies against the OS trust store), and runs it with
 known auth — first-class test infrastructure from the first commit, backing both the
-`socks5-bridge` conformance loop (§5) and the TLS verification path (§7.3).
+`transport-socks5` conformance loop (§5) and the TLS verification path (§7.3).
 
 The dependency-wall and supply-chain gates (`cargo-deny`, the `cargo tree` wall assertion below,
 `[workspace.lints]`) are scaffolded in the first commit so the wall — a structural invariant —
@@ -252,7 +253,7 @@ holds from the moment crates start growing edges (§6, step 0).
 The app/extension wall is a compile-time crate-dependency guarantee: `ffi-ext` does not depend on
 `config` (the parser) or `model` (the state machine) in its `Cargo.toml`, so they cannot link in;
 a `cargo tree` assertion (a `mise` task, run locally and in CI) fails the build if that changes.
-The extension links only `{profile, store (read), conn-error, tunnel (which pulls hysteria)}`,
+The extension links only `{profile, store (read), conn-error, dataplane (which pulls hysteria)}`,
 never the URL parser or the Model (keeping the extension minimal, §3.3).
 
 Workspace conventions: shared versions in `[workspace.dependencies]`, shared metadata in
@@ -273,7 +274,7 @@ This is where VPN clients usually break, so the contract is explicit.
 - A privileged tunnel process, walled from the app. On Apple (NE extension) and Windows
   (service) the tunnel runs in a separate privileged process with no shared heap; on Android it
   shares the app process (the wall is then logical). The two UniFFI components link disjoint subsets:
-  `ffi-app` → `model` (the sole app-side facade); `ffi-ext` → `{tunnel, store (read), conn-error,
+  `ffi-app` → `model` (the sole app-side facade); `ffi-ext` → `{dataplane, store (read), conn-error,
 profile}`, never `config` or `model`. Profiles are
   validated app-side at save time, and the tunnel consumes a minimal validated blob — a
   `profile::Profile` serialized as JSON, deserialized without linking the parser (which is why `profile`
@@ -306,12 +307,13 @@ hysteria-ui/
     store/                 # JSON doc + SecureStore trait DEFINED here; deps: profile
     conn-error/            # connect-error enum; leaf (only thiserror); crosses the app/ext wall
     hysteria/              # Hysteria 2 client on Quinn (mods: transport, auth, proxy, frag, obfs, brutal); builds the client from &profile::Profile
-    tunnel/                # netstack-smoltcp (over smoltcp) + tun-rs fd; drives the hysteria client (ext-only)
-    tun-bridge/            # dev TUN-harness binary over tunnel/ (the socks5-bridge counterpart); never linked into any ffi-* lib
+    netstack-smoltcp-socket/  # socket-style API over smoltcp + tun-rs fd; no hysteria dep
+    dataplane/             # relays through the hysteria client (ext-only); UDP NAT, counters
+    transport-tun/            # dev TUN-harness binary over dataplane/ (the transport-socks5 counterpart); never linked into any ffi-* lib
     model/                 # the Model: async serialized actor; sole app-side facade; state + stats snapshots; intents (app-only)
     ffi-app/               # cdylib+staticlib UniFFI component (Kotlin app); deps: model
-    ffi-ext/               # cdylib+staticlib UniFFI component (Swift extension); deps: tunnel, store, conn-error, profile
-    socks5-bridge/         # standalone SOCKS5 front-end over the hysteria client (also the protocol conformance harness); deps: hysteria, config; never linked into any ffi-* lib
+    ffi-ext/               # cdylib+staticlib UniFFI component (Swift extension); deps: dataplane, store, conn-error, profile
+    transport-socks5/         # standalone SOCKS5 front-end over the hysteria client (also the protocol conformance harness); deps: hysteria, config; never linked into any ffi-* lib
   fuzz/                    # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
   testdata/                # mise-managed: pinned reference Hysteria 2 server (rev c3a806b) + self-signed cert (trusted out of band in tests) + known auth; the conformance fixture
   bindings/                # generated + committed: UniFFI Kotlin + Swift bindings; the workspace produces, ui/ + apple/ consume
@@ -357,31 +359,33 @@ hysteria-ui/
   protocol carries no live counters). Maps connect failures into the `conn-error` enum.
   Conformance-tested against the reference Hysteria 2 server (§6, §7). This library API is the
   front-end seam: `hysteria` never assumes who drives it. Front-ends are interchangeable consumers —
-  the TUN netstack (`tunnel/`) for the system-wide VPN, and the SOCKS5 listener (`socks5-bridge`)
-  for a per-app/browser proxy. `socks5-bridge` is already a usable standalone front-end; keeping the
-  seam clean leaves the door open to shipping it more widely later (e.g. a pure-Rust
+  the TUN netstack (`dataplane/`) for the system-wide VPN, and the SOCKS5 listener (`transport-socks5`)
+  for a per-app/browser proxy. `transport-socks5` is already a usable standalone front-end; keeping
+  the seam clean leaves the door open to shipping it more widely later (e.g. a pure-Rust
   native-messaging host that a browser extension points `chrome.proxy` at — bypassing UniFFI and
   the JVM entirely); out of v1 scope, an invariant to preserve.
-- `tunnel/` — `netstack-smoltcp` (§3.2) plus `tun-rs` fd, driving the `hysteria` client: pump
-  tun-rs packets through the netstack, relay each accepted TCP flow to `hysteria::tcp` and NAT UDP
-  over a `hysteria` UDP session, copying bytes both ways. Among shipped libs, ext-only (a separate
-  dev TUN harness drives it too). Counts traffic at the netstack↔hysteria seam for the stats
-  snapshot.
-- `socks5-bridge/` — a standalone SOCKS5 front-end over the `hysteria` client (TCP `CONNECT` plus
+- `netstack-smoltcp-socket/` — a socket-style API over `netstack-smoltcp` (§3.2) plus a `tun-rs`
+  fd: builds the smoltcp stack, pumps packets between the TUN device and the netstack, and hands
+  back accepted TCP flows plus a UDP socket. Transport-agnostic — no `hysteria` dependency.
+- `dataplane/` — drives the `hysteria` client over `netstack-smoltcp-socket`: relay each accepted
+  TCP flow to `hysteria::tcp` and NAT UDP over a `hysteria` UDP session, copying bytes both ways.
+  Among shipped libs, ext-only (a separate dev TUN harness drives it too). Counts traffic at the
+  netstack↔hysteria seam for the stats snapshot.
+- `transport-socks5/` — a standalone SOCKS5 front-end over the `hysteria` client (TCP `CONNECT` plus
   UDP `ASSOCIATE`, covering both the TCP relay and the UDP/datagram relay), doubling as the
   protocol's local conformance loop. It takes a `hysteria2://` link (`--url`), parsed via `config`
   into a `profile::Profile` and built into the client config, plus a `--socks5` listen address.
   Usable on its own (per-app/browser proxying without a system-wide TUN); never linked into any
   `ffi-*` lib. The SOCKS5 protocol itself is delegated to `fast-socks5`. The TUN front-end (the
-  `tunnel` netstack over a root-opened utun on macOS) is a separate dev binary added alongside
-  `tunnel/` in step 2. Tested against the mise-managed local server (below).
+  `dataplane` netstack over a root-opened utun on macOS) is a separate dev binary added alongside
+  `dataplane/` in step 2. Tested against the mise-managed local server (below).
 - `conn-error/` — a leaf owning the connect-error enum (`thiserror`-derived; `AuthFailed |
 ServerUnreachable | Timeout | Unknown`; a rejected certificate folds into `ServerUnreachable`,
   since the QUIC layer does not surface it separately). Produced in the extension (which must
-  not link `model`) and relayed up; both `tunnel`/`hysteria` and `model` depend on it, neither on
+  not link `model`) and relayed up; both `dataplane`/`hysteria` and `model` depend on it, neither on
   the other.
 - `model/` — the serialized Model (the Model of Model–View) and the sole app-side facade. Depends
-  on `config`, `store`, `conn-error`, `profile`, never `tunnel`/`hysteria` (connect is driven
+  on `config`, `store`, `conn-error`, `profile`, never `dataplane`/`hysteria` (connect is driven
   through the OS, §4).
   - State: `Vec<store::Entry>`, `selected_id`, OS-derived `ConnectionState` (owned here),
       `last_error` (a `conn-error` value).
@@ -404,9 +408,9 @@ ServerUnreachable | Timeout | Unknown`; a rejected certificate folds into `Serve
   contract is additive-only and versioned; every snapshot carries a `schema_version`.
 
 Crate dependency DAG (must stay acyclic): `profile` (serde-only) and `conn-error` are sinks.
-`config → profile`; `store → profile`; `hysteria → profile, conn-error`; `tunnel → hysteria,
-profile, conn-error`; `model → config, store, conn-error, profile` (never `tunnel`/`hysteria`);
-`ffi-app → model`; `ffi-ext → tunnel, store, conn-error, profile`. `ffi-ext`
+`config → profile`; `store → profile`; `hysteria → profile, conn-error`; `dataplane → hysteria, netstack-smoltcp-socket,
+profile, conn-error`; `model → config, store, conn-error, profile` (never `dataplane`/`hysteria`);
+`ffi-app → model`; `ffi-ext → dataplane, store, conn-error, profile`. `ffi-ext`
 must never reach `config` or `model` — enforced by Cargo deps plus a `cargo tree` assertion (a
 `mise` task; local and CI; §3.8).
 
@@ -421,7 +425,7 @@ the Compose layer displays it alongside a Copy button.
 
 Core-first: retire the hardest risk early — protocol correctness — and prove the tunnel runs in a
 sandboxed NE before any OS/FFI/UI investment is built on top of it. The protocol is validated
-through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise-managed local server
+through the `transport-socks5` front-end and a dev TUN harness (§5) against a mise-managed local server
 (§3.8); FFI and UI come once the core is proven.
 
 0. Workspace plus guardrails — the repo-root `Cargo.toml` virtual manifest with empty crate skeletons,
@@ -433,17 +437,18 @@ through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise
 1. Hysteria 2 client plus local SOCKS5 loop — `profile/` (leaf), `conn-error/`, and `hysteria/`
    (h3 auth handshake, TCP relay, UDP/datagram relay plus fragmentation, Brutal as a Quinn
    `congestion::Controller` — validate its pacing maps onto Quinn's pacer — Salamander obfs, port
-   hopping), driven off a `profile::Profile`. `socks5-bridge` exposes the client as a local SOCKS5
+   hopping), driven off a `profile::Profile`. `transport-socks5` exposes the client as a local SOCKS5
    proxy: TCP `CONNECT` first, then UDP `ASSOCIATE` (SOCKS5 exercises the UDP/datagram relay,
    the riskiest path). Conformance against the mise-managed pinned reference server (rev `c3a806b`):
    `curl` over TCP and `dig` over UDP, with and without obfs, trusting the server's self-signed cert
    out of band (the `--ca` path; §7.3).
-2. Userspace TUN, standalone — `tunnel/` (netstack-smoltcp plus tun-rs), exercised by its own dev
-   TUN-harness binary (the counterpart to `socks5-bridge`): on macOS open a utun via raw fd as root
-   — no NE, no FFI — feed packets through the netstack into the proven `hysteria` client. Validates
-   the netstack end-to-end against the same local server; counts bytes at the netstack↔hysteria seam.
+2. Userspace TUN, standalone — `dataplane/` (netstack-smoltcp-socket plus tun-rs), exercised by its
+   own dev TUN-harness binary (the counterpart to `transport-socks5`): on macOS open a utun via raw
+   fd as root — no NE, no FFI — feed packets through the netstack into the proven `hysteria` client.
+   Validates the netstack end-to-end against the same local server; counts bytes at the
+   netstack↔hysteria seam.
 3. macOS de-risk — a minimal `staticlib` → Swift `NEPacketTunnelProvider` packaged as a **system
-   extension** linking the `tunnel/` crate, one hardcoded target, no UI. Confirm the netstack +
+   extension** linking the `dataplane/` crate, one hardcoded target, no UI. Confirm the netstack +
    Quinn + fd read/write run in the sandboxed extension, **and that a non-Xcode host app can embed,
    activate, sign and Developer-ID-notarize the system extension** (the riskiest macOS unknown), and
    that the macOS-slice `staticlib` + UniFFI Swift cross-compile path works (the full UniFFI Kotlin
@@ -459,7 +464,7 @@ through the `socks5-bridge` front-end and a dev TUN harness (§5) against a mise
    / delete / select / connect) (§1), against a mocked tunnel. First real exercise of the Model–View
    contract: snapshots/intents, observer callback, Compose coroutine (`Dispatchers.Main`)
    marshaling. This View fans out to every platform (step 8).
-6. Real tunnel on macOS — the `ffi-ext` UniFFI component (Swift) linking `tunnel/`; the Swift system
+6. Real tunnel on macOS — the `ffi-ext` UniFFI component (Swift) linking `dataplane/`; the Swift system
    extension from step 3 wired for real; App Group plus Keychain; `ConnectionState` from
    `NEVPNStatus` (§4); status/stats IPC. Hidden defaults: full-tunnel route, autoconnect last
    profile.
@@ -488,8 +493,8 @@ crates plus signed builds; implementation bugs → memory-safe Rust plus conform
 3. Transport — the link carries only `sni` (auth in userinfo). The server certificate is verified
    against the OS trust store via `rustls-platform-verifier`; there is no `insecure` bypass and no
    `pinSHA256` in links, so a server must present a publicly-trusted (e.g. ACME) certificate. The
-   trade-off: self-signed servers are unsupported from the GUI; the `socks5-bridge` dev tool keeps a
-   `--ca` flag to trust a private CA out of band (also how the conformance tests reach the
+   trade-off: self-signed servers are unsupported from the GUI; the `transport-socks5` dev tool keeps
+   a `--ca` flag to trust a private CA out of band (also how the conformance tests reach the
    self-signed reference server). A rejected certificate is reported as `ServerUnreachable` (the
    QUIC layer folds the TLS alert into a generic handshake failure).
 4. Explicit import and share — a `hysteria2://` deep link or clipboard never auto-saves; adding
@@ -506,7 +511,7 @@ crates plus signed builds; implementation bugs → memory-safe Rust plus conform
 6. No logging in shipped builds — `ffi-app`/`ffi-ext` install no `tracing`/`log` subscriber, so
    dependency log events (`quinn`/`rustls`/`tokio`/`h3`) reach no sink and there is nothing to leak;
    the `conn-error` enum (§5), mapped to an int in the extension, is the only diagnostic channel, so
-   the server address cannot cross the boundary. The `socks5-bridge` binary and the dev/test
+   the server address cannot cross the boundary. The `transport-socks5` binary and the dev/test
    harnesses (conformance, the macOS de-risk) keep `tracing` to stderr.
 7. Supply chain and licensing — pin every crate; enforce with `cargo-deny` (license — permissive
    plus MPL-2.0 for `uniffi` — plus RustSec advisories) and a Gradle/JVM dependency license scan.

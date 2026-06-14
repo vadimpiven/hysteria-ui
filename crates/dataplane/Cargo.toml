@@ -1,0 +1,20 @@
+[package]
+name = "dataplane"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+hysteria = { path = "../hysteria" }
+# Socket-style API over the smoltcp netstack: hands back accepted TCP streams, a
+# UDP receiver/sender, and the infra task set (replaces the in-crate netstack glue).
+netstack-smoltcp-socket = { path = "../netstack-smoltcp-socket" }
+# Per-flow relay tasks, channels, shutdown.
+tokio.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+pretty_assertions.workspace = true

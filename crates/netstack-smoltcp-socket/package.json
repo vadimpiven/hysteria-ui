@@ -1,5 +1,5 @@
 {
-  "name": "tun-bridge",
+  "name": "netstack-smoltcp-socket",
   "private": true,
   "scripts": {
     "test:nextest": "node ../../scripts/test-nextest.ts",

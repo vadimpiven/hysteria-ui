@@ -1,5 +1,5 @@
 [package]
-name = "tun-bridge"
+name = "transport-tun"
 edition.workspace = true
 license.workspace = true
 publish = false
@@ -11,10 +11,10 @@ workspace = true
 anyhow.workspace = true
 clap.workspace = true
 config = { path = "../config" }
+dataplane = { path = "../dataplane" }
 hysteria = { path = "../hysteria" }
 tokio.workspace = true
 tun-rs.workspace = true
-tunnel = { path = "../tunnel" }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -2,12 +2,13 @@
 members = [
     "crates/config",
     "crates/conn-error",
+    "crates/dataplane",
     "crates/hysteria",
+    "crates/netstack-smoltcp-socket",
     "crates/profile",
-    "crates/socks5-bridge",
     "crates/store",
-    "crates/tun-bridge",
-    "crates/tunnel",
+    "crates/transport-socks5",
+    "crates/transport-tun",
 ]
 resolver = "3"
 
@@ -91,9 +92,9 @@ undocumented_unsafe_blocks = "deny"
 anyhow = "1.0.102"
 blake2 = "0.10.6"
 bytes = "1.11.1"
-# socks5-bridge CLI.
+# transport-socks5 CLI.
 clap = { version = "4.5.51", features = ["derive"] }
-# socks5-bridge SOCKS5 server, incl. UDP datagram framing (new_udp_header /
+# transport-socks5 SOCKS5 server, incl. UDP datagram framing (new_udp_header /
 # parse_udp_request). MIT-licensed.
 fast-socks5 = "1.0.0"
 # hysteria2:// link parsing (config crate): percent-encoding + query (de)serde.
@@ -133,13 +134,14 @@ tempfile = "3.27.0"
 uuid = "1.23.2"
 # Wipe serialized-secret byte buffers from memory after use (store crate).
 zeroize = "1.8.2"
-# Userspace TCP/IP netstack over smoltcp for the TUN front-end (tunnel crate):
-# wraps smoltcp and hands back accepted TCP streams + a UDP socket, so we don't
-# hand-roll packet parsing / socket lifecycle / NAT.
+# Userspace TCP/IP netstack over smoltcp for the TUN front-end
+# (netstack-smoltcp-socket crate): wraps smoltcp and hands back accepted TCP
+# streams + a UDP socket, so we don't hand-roll packet parsing / socket lifecycle.
 netstack-smoltcp = "0.2.2"
 # Sink/Stream adapters for bridging the netstack to the TUN device.
 futures = "0.3.31"
-# Cross-platform TUN device (macOS utun, OS-provided fd) for tun-bridge/tunnel.
+# Cross-platform TUN device (macOS utun, OS-provided fd) for
+# transport-tun/netstack-smoltcp-socket.
 tokio = { version = "1.52.3", features = [
     "io-util",
     "macros",
@@ -151,7 +153,7 @@ tokio = { version = "1.52.3", features = [
     "time",
 ] }
 tun-rs = { version = "2.8.3", features = ["async"] }
-# socks5-bridge e2e test: a real SOCKS5 client + TLS to reach the internet.
+# transport-socks5 e2e test: a real SOCKS5 client + TLS to reach the internet.
 rustls-native-certs = "0.8.2"
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["aws-lc-rs"] }
 tokio-socks = "0.5.2"

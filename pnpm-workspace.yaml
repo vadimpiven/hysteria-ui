@@ -1,11 +1,12 @@
 packages:
   - crates/config
   - crates/conn-error
+  - crates/dataplane
   - crates/hysteria
+  - crates/netstack-smoltcp-socket
   - crates/profile
-  - crates/socks5-bridge
-  - crates/tun-bridge
-  - crates/tunnel
+  - crates/transport-socks5
+  - crates/transport-tun
 
 allowBuilds: {}
 
