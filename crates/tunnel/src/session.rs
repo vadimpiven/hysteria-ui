@@ -2,43 +2,48 @@
 //!
 //! Mirrors the Go TUN handler: one Hysteria UDP session per app *source*
 //! endpoint, multiplexing every destination through it (the destination rides
-//! each datagram's address). A per-session task pumps replies back out as
-//! [`UdpOutbound`]. Idle sessions are reaped via [`reap_idle`](Sessions::reap_idle).
+//! each datagram's address). A per-session task pumps replies back out through
+//! the [`Downstream`]. Idle sessions are reaped via
+//! [`reap_idle`](Sessions::reap_idle).
 //!
-//! The map is abstracted over [`UdpRelay`] (implemented for the Hysteria
-//! `UdpConn`) so the NAT/GC logic is unit-testable with a fake relay.
+//! The map sits between two seams and owns no caller type, so the NAT/GC logic
+//! is unit-testable with fakes on both sides:
+//!
+//! * [`Upstream`] — the duplex link to the Hysteria server (send to a remote,
+//!   receive its replies). Implemented for the Hysteria `UdpConn`.
+//! * [`Downstream`] — the reply link back toward the app (deliver one datagram).
+//!
+//! The directions are literal: app→server traffic goes out via the [`Upstream`],
+//! server→app replies come back via the [`Downstream`]. Observability stays with
+//! the caller — outbound results come back through [`Outcome`], inbound bytes are
+//! tallied inside its [`Downstream`].
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
 use hysteria::client::transport::QuinnUdpIo;
 use hysteria::client::udp::UdpConn;
-use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-
-use crate::UdpOutbound;
 
 /// A received datagram: payload plus the source address it came from, as a string.
 type Datagram = (Vec<u8>, String);
 
-/// One UDP relay session: send a datagram to an address, and receive replies. A
-/// thin seam over the Hysteria `UdpConn` so the session map can be tested with a
-/// fake.
-pub(crate) trait UdpRelay: Send + Sync + 'static {
+/// The upstream seam: the duplex link to the Hysteria server — send a datagram
+/// to an address, and receive replies. A thin cover over the Hysteria `UdpConn`
+/// so the session map can be tested with a fake.
+pub(crate) trait Upstream: Send + Sync + 'static {
     /// Send `data` to `addr` (e.g. `"1.2.3.4:53"`); `false` on transport error.
     fn send(&self, data: &[u8], addr: &str) -> bool;
     /// The next datagram as `(data, source-addr-string)`, or `None` once closed.
     fn receive(&self) -> impl Future<Output = Option<Datagram>> + Send;
 }
 
-impl UdpRelay for UdpConn<QuinnUdpIo> {
+impl Upstream for UdpConn<QuinnUdpIo> {
     fn send(&self, data: &[u8], addr: &str) -> bool {
         UdpConn::send(self, data, addr).is_ok()
     }
@@ -47,50 +52,75 @@ impl UdpRelay for UdpConn<QuinnUdpIo> {
     }
 }
 
-/// Shared bits a per-session receive task needs.
-pub(crate) struct RecvCtx {
-    pub(crate) udp_out: mpsc::Sender<UdpOutbound>,
-    pub(crate) shutdown: watch::Receiver<bool>,
-    /// Bytes received from remotes (server→app), tallied at the seam.
-    pub(crate) rx: Arc<AtomicU64>,
-    /// Cumulative count of UDP sessions opened.
-    pub(crate) sessions: Arc<AtomicU64>,
+/// The downstream seam, mirroring [`Upstream`]: the reply link back toward the
+/// app. Cloned into each per-session task, so the NAT carries no caller type —
+/// the tunnel's implementation owns the channel and any byte accounting.
+pub(crate) trait Downstream: Clone + Send + Sync + 'static {
+    /// Deliver one reply: payload `data` from remote `from`, addressed back to
+    /// app source `src`. Returns `false` if the downstream is gone, which stops
+    /// the session's reply task.
+    fn deliver(
+        &self,
+        src: SocketAddr,
+        from: SocketAddr,
+        data: Vec<u8>,
+    ) -> impl Future<Output = bool> + Send;
 }
 
-struct Entry<R> {
-    conn: Arc<R>,
+/// What [`forward`](Sessions::forward) did with a datagram, for the caller's
+/// counters. Carries no counters itself — the NAT stays metric-free.
+pub(crate) enum Outcome {
+    /// Forwarded to the destination. `opened` is true when this datagram created
+    /// the session (so the caller can count newly opened NAT sessions).
+    Sent { opened: bool },
+    /// Dropped: no session could be opened (UDP disabled or table full) or the
+    /// transport send failed. The caller counts this as a flow error. `opened` is
+    /// true when the session was freshly created but its *first* send failed: the
+    /// session is still registered (and reaped only when idle), so it must be
+    /// counted just as a successful first send would be.
+    Dropped { opened: bool },
+}
+
+struct Entry<U> {
+    conn: Arc<U>,
     last_activity: Instant,
     task: JoinHandle<()>,
 }
 
 /// UDP sessions keyed by app source endpoint (the NAT key).
-pub(crate) struct Sessions<R: UdpRelay> {
-    map: HashMap<SocketAddr, Entry<R>>,
+pub(crate) struct Sessions<U: Upstream, D: Downstream> {
+    map: HashMap<SocketAddr, Entry<U>>,
     /// Cap on concurrent sessions; a new source past this is refused (its
     /// datagram is dropped) so a local source-port flood can't grow the map —
     /// and the server's session table — without bound.
     max: usize,
+    /// Reply link the per-session tasks pump into.
+    downstream: D,
+    /// Tripped to stop every reply task on tunnel shutdown.
+    shutdown: watch::Receiver<bool>,
 }
 
-impl<R: UdpRelay> Sessions<R> {
-    pub(crate) fn new(max: usize) -> Self {
+impl<U: Upstream, D: Downstream> Sessions<U, D> {
+    pub(crate) fn new(max: usize, downstream: D, shutdown: watch::Receiver<bool>) -> Self {
         Self {
             map: HashMap::new(),
             max,
+            downstream,
+            shutdown,
         }
     }
 
     /// The session for `src`, creating one (via `create`) and spawning its reply
-    /// task on first use. Returns `None` if `create` fails (e.g. UDP disabled).
+    /// task on first use. Returns `None` if the table is full or `create` fails
+    /// (e.g. UDP disabled).
     pub(crate) fn get_or_create<F>(
         &mut self,
         src: SocketAddr,
         now: Instant,
-        ctx: &RecvCtx,
         create: F,
-    ) -> Option<Arc<R>>
+    ) -> Option<Arc<U>>
     where
-        F: FnOnce() -> Option<Arc<R>>,
+        F: FnOnce() -> Option<Arc<U>>,
     {
         if let Some(entry) = self.map.get_mut(&src) {
             entry.last_activity = now;
@@ -100,13 +130,11 @@ impl<R: UdpRelay> Sessions<R> {
             return None; // session table full: drop, like the TCP/UDP-socket caps
         }
         let conn = create()?;
-        ctx.sessions.fetch_add(1, Ordering::Relaxed);
         let task = spawn_recv(
             Arc::clone(&conn),
             src,
-            ctx.udp_out.clone(),
-            ctx.shutdown.clone(),
-            Arc::clone(&ctx.rx),
+            self.downstream.clone(),
+            self.shutdown.clone(),
         );
         self.map.insert(
             src,
@@ -120,27 +148,35 @@ impl<R: UdpRelay> Sessions<R> {
     }
 
     /// Forward one app datagram to `dst` through `src`'s session, opening the
-    /// session (via `create`) on first use. Returns whether it was sent — `false`
-    /// covers both "no session" and a transport error, which the caller counts as
-    /// a flow error. This is the send half of Go's `NewPacketConnection`
-    /// (`rc.Send(buffer.Bytes(), addr.String())`); the receive half is the task
-    /// spawned in `get_or_create`.
+    /// session (via `create`) on first use. The send half of Go's
+    /// `NewPacketConnection` (`rc.Send(buffer.Bytes(), addr.String())`); the
+    /// receive half is the task spawned in [`get_or_create`](Self::get_or_create).
     pub(crate) fn forward<F>(
         &mut self,
         src: SocketAddr,
         dst: SocketAddr,
         data: &[u8],
         now: Instant,
-        ctx: &RecvCtx,
         create: F,
-    ) -> bool
+    ) -> Outcome
     where
-        F: FnOnce() -> Option<Arc<R>>,
+        F: FnOnce() -> Option<Arc<U>>,
     {
-        let Some(conn) = self.get_or_create(src, now, ctx, create) else {
-            return false;
+        // Snapshot membership *before* creating: a None from `get_or_create`
+        // means nothing was inserted (table full / UDP disabled), so `opened`
+        // there is false; otherwise a fresh insert is an open.
+        let already_open = self.map.contains_key(&src);
+        let Some(conn) = self.get_or_create(src, now, create) else {
+            return Outcome::Dropped { opened: false };
         };
-        conn.send(data, &dst.to_string())
+        let opened = !already_open;
+        if conn.send(data, &dst.to_string()) {
+            Outcome::Sent { opened }
+        } else {
+            // The session is created and registered even though this first send
+            // failed; it lingers until reaped, so report `opened` to count it.
+            Outcome::Dropped { opened }
+        }
     }
 
     /// Drop sessions idle longer than `idle` (closing the Hysteria session and
@@ -163,7 +199,7 @@ impl<R: UdpRelay> Sessions<R> {
     }
 }
 
-impl<R: UdpRelay> Drop for Sessions<R> {
+impl<U: Upstream, D: Downstream> Drop for Sessions<U, D> {
     fn drop(&mut self) {
         for entry in self.map.values() {
             entry.task.abort();
@@ -171,13 +207,12 @@ impl<R: UdpRelay> Drop for Sessions<R> {
     }
 }
 
-/// Pump a session's replies out as [`UdpOutbound`] until it closes or shutdown.
-fn spawn_recv<R: UdpRelay>(
-    conn: Arc<R>,
+/// Pump a session's replies into the downstream until it closes or shutdown trips.
+fn spawn_recv<U: Upstream, D: Downstream>(
+    conn: Arc<U>,
     src: SocketAddr,
-    udp_out: mpsc::Sender<UdpOutbound>,
+    downstream: D,
     mut shutdown: watch::Receiver<bool>,
-    rx: Arc<AtomicU64>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -191,9 +226,8 @@ fn spawn_recv<R: UdpRelay>(
                     let Ok(from) = from.parse::<SocketAddr>() else {
                         continue;
                     };
-                    rx.fetch_add(u64::try_from(data.len()).unwrap_or(u64::MAX), Ordering::Relaxed);
-                    if udp_out.send(UdpOutbound { src, from, data }).await.is_err() {
-                        break; // netstack gone
+                    if !downstream.deliver(src, from, data).await {
+                        break; // downstream gone
                     }
                 },
                 _ = shutdown.changed() => break,
@@ -203,8 +237,8 @@ fn spawn_recv<R: UdpRelay>(
 }
 
 /// Sessions idle longer than `idle`. Pure, so the GC policy is testable.
-fn idle_keys<R>(
-    map: &HashMap<SocketAddr, Entry<R>>,
+fn idle_keys<U>(
+    map: &HashMap<SocketAddr, Entry<U>>,
     now: Instant,
     idle: Duration,
 ) -> Vec<SocketAddr> {
@@ -224,76 +258,100 @@ mod tests {
 
     use super::*;
 
-    /// A relay whose `receive` never resolves, so the session task stays alive.
-    struct FakeRelay {
+    /// An upstream whose `receive` never resolves, so the session task stays alive.
+    struct FakeUpstream {
         sent: Mutex<Vec<Datagram>>,
+        /// When true, `send` records the datagram but reports a transport error.
+        fail_send: bool,
     }
 
-    impl UdpRelay for FakeRelay {
+    impl Upstream for FakeUpstream {
         fn send(&self, data: &[u8], addr: &str) -> bool {
             self.sent
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push((data.to_vec(), addr.to_string()));
-            true
+            !self.fail_send
         }
         async fn receive(&self) -> Option<Datagram> {
             std::future::pending().await
         }
     }
 
-    type Harness = (RecvCtx, mpsc::Receiver<UdpOutbound>);
+    /// Replies a [`FakeDownstream`] was handed: `(src, from, data)` per delivery.
+    type Delivered = Arc<Mutex<Vec<(SocketAddr, SocketAddr, Vec<u8>)>>>;
 
-    fn ctx() -> Harness {
-        let (udp_out, rx_chan) = mpsc::channel(8);
-        let (_tx, shutdown) = watch::channel(false);
-        let ctx = RecvCtx {
-            udp_out,
-            shutdown,
-            rx: Arc::new(AtomicU64::new(0)),
-            sessions: Arc::new(AtomicU64::new(0)),
-        };
-        (ctx, rx_chan)
+    /// A downstream that records what it was handed; stands in for the tunnel's.
+    #[derive(Clone, Default)]
+    struct FakeDownstream {
+        delivered: Delivered,
+    }
+
+    impl Downstream for FakeDownstream {
+        async fn deliver(&self, src: SocketAddr, from: SocketAddr, data: Vec<u8>) -> bool {
+            self.delivered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push((src, from, data));
+            true
+        }
+    }
+
+    /// A session map plus the live shutdown sender (kept so reply tasks aren't
+    /// torn down mid-test) and the downstream (kept for inspection).
+    type Harness = (
+        Sessions<FakeUpstream, FakeDownstream>,
+        watch::Sender<bool>,
+        FakeDownstream,
+    );
+
+    fn harness(max: usize) -> Harness {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let downstream = FakeDownstream::default();
+        let sessions = Sessions::new(max, downstream.clone(), shutdown_rx);
+        (sessions, shutdown_tx, downstream)
+    }
+
+    fn fake_upstream() -> Option<Arc<FakeUpstream>> {
+        Some(Arc::new(FakeUpstream {
+            sent: Mutex::new(Vec::new()),
+            fail_send: false,
+        }))
+    }
+
+    fn failing_upstream() -> Option<Arc<FakeUpstream>> {
+        Some(Arc::new(FakeUpstream {
+            sent: Mutex::new(Vec::new()),
+            fail_send: true,
+        }))
     }
 
     #[tokio::test]
     async fn get_or_create_dedups_by_source() -> Result<()> {
-        let (ctx, _rx) = ctx();
-        let mut sessions: Sessions<FakeRelay> = Sessions::new(usize::MAX);
+        let (mut sessions, _shutdown, _downstream) = harness(usize::MAX);
         let src: SocketAddr = "10.0.0.2:40000".parse()?;
         let now = Instant::now();
 
-        let make = || {
-            Some(Arc::new(FakeRelay {
-                sent: Mutex::new(Vec::new()),
-            }))
-        };
         let a = sessions
-            .get_or_create(src, now, &ctx, make)
+            .get_or_create(src, now, fake_upstream)
             .ok_or_else(|| anyhow!("first create failed"))?;
         let b = sessions
-            .get_or_create(src, now, &ctx, make)
+            .get_or_create(src, now, fake_upstream)
             .ok_or_else(|| anyhow!("second lookup failed"))?;
 
         assert!(Arc::ptr_eq(&a, &b), "same source reuses one session");
         assert_eq!(sessions.len(), 1, "one session for one source");
-        assert_eq!(ctx.sessions.load(Ordering::Relaxed), 1, "counted one open");
         Ok(())
     }
 
     #[tokio::test]
     async fn reap_idle_drops_stale_sessions() -> Result<()> {
-        let (ctx, _rx) = ctx();
-        let mut sessions: Sessions<FakeRelay> = Sessions::new(usize::MAX);
+        let (mut sessions, _shutdown, _downstream) = harness(usize::MAX);
         let src: SocketAddr = "10.0.0.2:40000".parse()?;
         let start = Instant::now();
 
         sessions
-            .get_or_create(src, start, &ctx, || {
-                Some(Arc::new(FakeRelay {
-                    sent: Mutex::new(Vec::new()),
-                }))
-            })
+            .get_or_create(src, start, fake_upstream)
             .ok_or_else(|| anyhow!("create failed"))?;
         assert_eq!(sessions.len(), 1, "session present");
 
@@ -304,55 +362,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forward_sends_datagram_to_destination() -> Result<()> {
-        let (ctx, _rx) = ctx();
-        let mut sessions: Sessions<FakeRelay> = Sessions::new(usize::MAX);
+    async fn forward_sends_datagram_and_reports_open() -> Result<()> {
+        let (mut sessions, _shutdown, _downstream) = harness(usize::MAX);
         let src: SocketAddr = "10.0.0.2:40000".parse()?;
         let dst: SocketAddr = "1.1.1.1:53".parse()?;
-        let relay = Arc::new(FakeRelay {
+        let relay = Arc::new(FakeUpstream {
             sent: Mutex::new(Vec::new()),
+            fail_send: false,
         });
         let made = Arc::clone(&relay);
 
-        let sent = sessions.forward(src, dst, b"hi", Instant::now(), &ctx, move || Some(made));
+        let first = sessions.forward(src, dst, b"hi", Instant::now(), move || Some(made));
+        assert!(
+            matches!(first, Outcome::Sent { opened: true }),
+            "first datagram opens the session and is sent"
+        );
+        // A second datagram from the same source reuses the session (not opened).
+        let again = sessions.forward(src, dst, b"yo", Instant::now(), fake_upstream);
+        assert!(
+            matches!(again, Outcome::Sent { opened: false }),
+            "reused source is sent without re-opening"
+        );
 
-        assert!(sent, "datagram forwarded");
         let recorded = relay
             .sent
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(
             *recorded,
-            vec![(b"hi".to_vec(), "1.1.1.1:53".to_string())],
-            "sent payload to the destination address"
+            vec![
+                (b"hi".to_vec(), "1.1.1.1:53".to_string()),
+                (b"yo".to_vec(), "1.1.1.1:53".to_string()),
+            ],
+            "both payloads went to the destination address"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn open_is_reported_even_when_first_send_fails() -> Result<()> {
+        let (mut sessions, _shutdown, _downstream) = harness(usize::MAX);
+        let src: SocketAddr = "10.0.0.2:40000".parse()?;
+        let dst: SocketAddr = "1.1.1.1:53".parse()?;
+
+        // The first datagram opens the session but its send fails. It's dropped,
+        // yet the session is now in the map — so the open must still be reported,
+        // or the session would never be counted (the regression this guards).
+        let first = sessions.forward(src, dst, b"hi", Instant::now(), failing_upstream);
+        assert!(
+            matches!(first, Outcome::Dropped { opened: true }),
+            "a failed first send still reports the session as opened"
+        );
+        assert_eq!(sessions.len(), 1, "the opened session stays in the map");
+
+        // A later datagram reuses that session; a second failure is not a re-open.
+        let again = sessions.forward(src, dst, b"yo", Instant::now(), failing_upstream);
+        assert!(
+            matches!(again, Outcome::Dropped { opened: false }),
+            "reusing an existing session is never reported as a new open"
         );
         Ok(())
     }
 
     #[tokio::test]
     async fn refuses_new_source_when_session_table_is_full() -> Result<()> {
-        let (ctx, _rx) = ctx();
-        let mut sessions: Sessions<FakeRelay> = Sessions::new(1);
+        let (mut sessions, _shutdown, _downstream) = harness(1);
         let now = Instant::now();
-        let make = || {
-            Some(Arc::new(FakeRelay {
-                sent: Mutex::new(Vec::new()),
-            }))
-        };
 
         let first: SocketAddr = "10.0.0.2:40000".parse()?;
         assert!(
-            sessions.get_or_create(first, now, &ctx, make).is_some(),
+            sessions.get_or_create(first, now, fake_upstream).is_some(),
             "first source opens a session"
         );
         let second: SocketAddr = "10.0.0.2:40001".parse()?;
         assert!(
-            sessions.get_or_create(second, now, &ctx, make).is_none(),
+            sessions.get_or_create(second, now, fake_upstream).is_none(),
             "a new source past the cap is refused"
         );
         // The already-open source is still served (the cap only blocks new ones).
         assert!(
-            sessions.get_or_create(first, now, &ctx, make).is_some(),
+            sessions.get_or_create(first, now, fake_upstream).is_some(),
             "an existing source is unaffected by the cap"
         );
         assert_eq!(sessions.len(), 1, "the cap held the table at one session");

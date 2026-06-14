@@ -3,9 +3,10 @@
 //! Bridges a TUN device (raw IP packets) to the `hysteria` client. The userspace
 //! netstack is `netstack-smoltcp`: it accepts each flow from the TUN's packets
 //! and hands back an async TCP stream (with the original destination) or UDP
-//! datagrams, which we relay through the client. We own only the relay and the
-//! per-source UDP NAT (the `session` module); packet parsing, socket lifecycle,
-//! and flow detection live in the netstack crate.
+//! datagrams, which we relay through the client. We own the relay tasks and the
+//! per-source UDP NAT (the `session` module, generic over its `Upstream`/
+//! `Downstream` seams so it carries no tunnel type); packet parsing, socket
+//! lifecycle, and flow detection live in the netstack crate.
 //!
 //! The device is supplied by the caller as an [`AsyncDevice`] (the OS-provided fd
 //! behind the FFI extension, or a utun in the `tun-bridge` dev harness). [`spawn`]
@@ -43,7 +44,8 @@ use tokio::task::JoinSet;
 use tun_rs::AsyncDevice;
 
 use crate::count::Counting;
-use crate::session::RecvCtx;
+use crate::session::Downstream;
+use crate::session::Outcome;
 use crate::session::Sessions;
 
 /// How often idle UDP sessions are swept.
@@ -51,19 +53,42 @@ const GC_INTERVAL: Duration = Duration::from_secs(30);
 /// Idle UDP sessions are reaped after this long (mirrors the Go TUN handler's
 /// UDP timeout).
 const UDP_IDLE: Duration = Duration::from_mins(5);
-/// Reply-datagram channel depth between session tasks and the UDP writer.
-const UDP_OUT_CHANNEL: usize = 256;
+/// Reply channel depth between the session tasks and the UDP writer.
+const REPLY_CHANNEL: usize = 256;
 
 /// The concrete Hysteria UDP session type the NAT map holds.
 type Session = hysteria::client::udp::UdpConn<hysteria::client::transport::QuinnUdpIo>;
 
-/// A datagram from a remote back to the app, queued for the UDP writer. `src` is
-/// the app endpoint to deliver to; `from` is the remote it came from, sent as the
-/// reply's source so the app sees an answer from where it asked.
-pub(crate) struct UdpOutbound {
+/// A reply datagram from a remote back to the app, queued for the UDP writer.
+/// `src` is the app endpoint to deliver to; `from` is the remote it came from,
+/// sent as the reply's source so the app sees an answer from where it asked.
+pub(crate) struct UdpReply {
     pub(crate) src: SocketAddr,
     pub(crate) from: SocketAddr,
     pub(crate) data: Vec<u8>,
+}
+
+/// The tunnel's [`Downstream`]: queues each reply for the UDP writer and tallies
+/// received bytes at the seam. This is where the NAT's caller-owned concerns —
+/// the reply channel and the `rx` counter — live, keeping `session` metric-free.
+#[derive(Clone)]
+struct ReplyQueue {
+    reply_tx: mpsc::Sender<UdpReply>,
+    /// Bytes received from remotes (server→app), tallied as they arrive.
+    rx: Arc<AtomicU64>,
+}
+
+impl Downstream for ReplyQueue {
+    async fn deliver(&self, src: SocketAddr, from: SocketAddr, data: Vec<u8>) -> bool {
+        self.rx.fetch_add(
+            u64::try_from(data.len()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        self.reply_tx
+            .send(UdpReply { src, from, data })
+            .await
+            .is_ok()
+    }
 }
 
 /// Buffer/flow caps. The `*_buffer` values are channel depths bounding queued
@@ -283,14 +308,13 @@ async fn orchestrate(ns: Netstack) {
 
     let (mut sink, mut stream) = stack.split();
     let (mut udp_rd, mut udp_wr) = udp_socket.split();
-    let (udp_out_tx, mut udp_out_rx) = mpsc::channel::<UdpOutbound>(UDP_OUT_CHANNEL);
-    let mut sessions: Sessions<Session> = Sessions::new(config.limits.max_udp_sessions);
-    let recv_ctx = RecvCtx {
-        udp_out: udp_out_tx,
-        shutdown: shutdown.clone(),
+    let (reply_tx, mut reply_rx) = mpsc::channel::<UdpReply>(REPLY_CHANNEL);
+    let replies = ReplyQueue {
+        reply_tx,
         rx: Arc::clone(&counters.rx),
-        sessions: Arc::clone(&counters.udp_sessions),
     };
+    let mut sessions: Sessions<Session, ReplyQueue> =
+        Sessions::new(config.limits.max_udp_sessions, replies, shutdown.clone());
     let semaphore = Arc::new(Semaphore::new(config.limits.max_tcp_flows));
 
     // Infrastructure tasks (the netstack runner + the TUN<->stack pumps + the UDP
@@ -342,15 +366,19 @@ async fn orchestrate(ns: Netstack) {
     // per-session tasks. Sends `(data, from, src)` so the reply's source is the
     // remote the app addressed.
     infra.spawn(async move {
-        while let Some(out) = udp_out_rx.recv().await {
+        while let Some(reply) = reply_rx.recv().await {
             // Spoofing the source needs `from` and `src` in the same address
             // family; a mismatched pair (not reachable in practice — a session's
             // replies share the app's family) would make the netstack reject the
             // send and, via `infra.join_next`, tear the tunnel down. Skip it.
-            if out.from.is_ipv4() != out.src.is_ipv4() {
+            if reply.from.is_ipv4() != reply.src.is_ipv4() {
                 continue;
             }
-            if udp_wr.send((out.data, out.from, out.src)).await.is_err() {
+            if udp_wr
+                .send((reply.data, reply.from, reply.src))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
@@ -383,13 +411,23 @@ async fn orchestrate(ns: Netstack) {
                 let Some((data, src, dst)) = inbound else { break };
                 let client = Arc::clone(&client);
                 let len = u64::try_from(data.len()).unwrap_or(u64::MAX);
-                let sent = sessions.forward(src, dst, &data, Instant::now(), &recv_ctx, move || {
+                match sessions.forward(src, dst, &data, Instant::now(), move || {
                     client.udp().ok().map(Arc::new)
-                });
-                if sent {
-                    counters.tx.fetch_add(len, Ordering::Relaxed);
-                } else {
-                    counters.flow_errors.fetch_add(1, Ordering::Relaxed);
+                }) {
+                    Outcome::Sent { opened } => {
+                        counters.tx.fetch_add(len, Ordering::Relaxed);
+                        if opened {
+                            counters.udp_sessions.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    Outcome::Dropped { opened } => {
+                        counters.flow_errors.fetch_add(1, Ordering::Relaxed);
+                        // A fresh session whose first send failed is still in the
+                        // map, so count it like any other opened session.
+                        if opened {
+                            counters.udp_sessions.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
                 }
             },
             _ = gc.tick() => sessions.reap_idle(Instant::now(), UDP_IDLE),
