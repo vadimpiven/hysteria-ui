@@ -1,7 +1,7 @@
 //! The dataplane: relay every flow the netstack accepts through the Hysteria 2
 //! client.
 //!
-//! The userspace netstack lives below us in `netstack-smoltcp-socket`: given a TUN
+//! The userspace netstack lives below us in `netstack`: given a TUN
 //! device it hands back accepted async TCP streams (each with its original
 //! destination) and UDP datagrams. We relay those through the `hysteria` client,
 //! owning the relay tasks and the per-source UDP NAT (the `session` module, generic
@@ -26,9 +26,9 @@ use std::time::Instant;
 use anyhow::Context as _;
 use anyhow::Result;
 use hysteria::client::Client;
-use netstack_smoltcp_socket as socket;
-use netstack_smoltcp_socket::AsyncDevice;
-use netstack_smoltcp_socket::TcpStream;
+use netstack as socket;
+use netstack::AsyncDevice;
+use netstack::TcpStream;
 use tokio::io::copy_bidirectional;
 use tokio::sync::Semaphore;
 use tokio::sync::watch;

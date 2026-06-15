@@ -11,7 +11,7 @@ anyhow.workspace = true
 hysteria = { path = "../hysteria" }
 # Socket-style API over the smoltcp netstack: hands back accepted TCP streams, a
 # UDP receiver/sender, and the infra task set (replaces the in-crate netstack glue).
-netstack-smoltcp-socket = { path = "../netstack-smoltcp-socket" }
+netstack = { path = "../netstack" }
 # Per-flow relay tasks, channels, shutdown.
 tokio.workspace = true
 

@@ -4,7 +4,7 @@ members = [
     "crates/conn-error",
     "crates/dataplane",
     "crates/hysteria",
-    "crates/netstack-smoltcp-socket",
+    "crates/netstack",
     "crates/profile",
     "crates/store",
     "crates/transport-socks5",
@@ -135,13 +135,13 @@ uuid = "1.23.2"
 # Wipe serialized-secret byte buffers from memory after use (store crate).
 zeroize = "1.8.2"
 # Userspace TCP/IP netstack over smoltcp for the TUN front-end
-# (netstack-smoltcp-socket crate): wraps smoltcp and hands back accepted TCP
+# (netstack crate): wraps smoltcp and hands back accepted TCP
 # streams + a UDP socket, so we don't hand-roll packet parsing / socket lifecycle.
 netstack-smoltcp = "0.2.2"
 # Sink/Stream adapters for bridging the netstack to the TUN device.
 futures = "0.3.31"
 # Cross-platform TUN device (macOS utun, OS-provided fd) for
-# transport-tun/netstack-smoltcp-socket.
+# transport-tun/netstack.
 tokio = { version = "1.52.3", features = [
     "io-util",
     "macros",

@@ -33,6 +33,14 @@ import { ensureError, runScript } from "./helpers/run-script.ts";
 const READY_MARKER = "server up and running";
 /** How long to wait for that line before giving up. */
 const STARTUP_TIMEOUT_MS = 15_000;
+/**
+ * Startup attempts before giving up. `hysteria server` binds the listen port
+ * itself, so there is an unavoidable gap between us choosing a free port and it
+ * claiming it; under the parallel test suite another server can take that port
+ * in the gap, making hysteria exit before startup. Each retry picks a fresh
+ * port.
+ */
+const MAX_START_ATTEMPTS = 5;
 /** Host advertised to the client (the cert covers `localhost` / loopback). */
 const HOST = "127.0.0.1";
 const SNI = "localhost";
@@ -223,60 +231,30 @@ function wireShutdown(child: ChildProcess): void {
   }
 }
 
-/**
- * Run the server: forward its logs (which it writes to stderr) to our stderr,
- * and once it logs {@link READY_MARKER}, announce it by writing the client
- * config as the sole stdout line. Resolves with the exit code; rejects (caller
- * cleans up) if the server errors or exits before becoming ready.
- */
-async function runServer({
-  child,
-  clientConfig,
-}: {
-  child: ChildProcess;
+/** A server that has logged {@link READY_MARKER} and is accepting connections. */
+interface StartedServer {
+  /** The client config to announce on stdout. */
   clientConfig: ClientConfig;
-}): Promise<number> {
-  const { promise: ready, resolve, reject } = Promise.withResolvers<void>();
-  const { promise: exited, resolve: resolveExit } = Promise.withResolvers<number>();
-  let isReady = false;
-
-  if (child.stderr !== null) {
-    createInterface({ input: child.stderr }).on("line", (line) => {
-      console.error(line);
-      if (!isReady && line.includes(READY_MARKER)) {
-        isReady = true;
-        resolve();
-      }
-    });
-  }
-
-  const timeout = setTimeout(
-    () => reject(new Error("timed out waiting for hysteria to start")),
-    STARTUP_TIMEOUT_MS,
-  );
-  child.once("error", (err) => reject(ensureError(err)));
-  child.once("exit", (code, signal) => {
-    // Before the marker this is a startup failure (its logs are already on
-    // stderr, so the error needs no extra context); after, it's the exit code.
-    if (isReady) resolveExit(code ?? 0);
-    else reject(new Error(`hysteria exited before startup (code=${code}, signal=${signal})`));
-  });
-
-  try {
-    await ready;
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  process.stdout.write(`${JSON.stringify(clientConfig)}\n`);
-  return await exited;
+  /** Resolves with the server's exit code once it exits. */
+  exited: Promise<number>;
+  /** Removes the temp cert/config directory. */
+  cleanup: () => Promise<void>;
 }
 
-runScript("Hysteria server", async () => {
-  const provided = parseServerConfig(process.argv.slice(2));
-  const { cert, key } = await generateCertificate();
+/**
+ * One startup attempt: pick a free port, write the server files, spawn the
+ * server, and forward its logs (written to stderr) to our stderr. Resolves with
+ * the running server once it logs {@link READY_MARKER}, or `null` if it exited
+ * before becoming ready — a transient port-bind race the caller retries with a
+ * fresh port. Rejects (after killing the child and cleaning up) only on a
+ * startup timeout or spawn error.
+ */
+async function attemptStart(
+  provided: ServerConfig,
+  cert: string,
+  key: string,
+): Promise<StartedServer | null> {
   const port = await pickFreePort();
-
   const { config, configPath, certPath, cleanup } = await writeServerFiles({
     provided,
     port,
@@ -289,11 +267,82 @@ runScript("Hysteria server", async () => {
     stdio: ["ignore", "ignore", "pipe"],
     env: process.env,
   });
-  wireShutdown(child);
 
+  const {
+    promise: ready,
+    resolve: resolveReady,
+    reject: rejectReady,
+  } = Promise.withResolvers<boolean>();
+  const { promise: exited, resolve: resolveExit } = Promise.withResolvers<number>();
+  let isReady = false;
+
+  if (child.stderr !== null) {
+    createInterface({ input: child.stderr }).on("line", (line) => {
+      console.error(line);
+      if (!isReady && line.includes(READY_MARKER)) {
+        isReady = true;
+        resolveReady(true);
+      }
+    });
+  }
+
+  const timeout = setTimeout(
+    () => rejectReady(new Error("timed out waiting for hysteria to start")),
+    STARTUP_TIMEOUT_MS,
+  );
+  child.once("error", (err) => rejectReady(ensureError(err)));
+  child.once("exit", (code) => {
+    // Logs are already on stderr. An exit before the ready marker is a startup
+    // failure (often a port-bind race) the caller retries; after it, this is
+    // the server's real exit code.
+    if (isReady) resolveExit(code ?? 0);
+    else resolveReady(false);
+  });
+
+  let started: boolean;
+  try {
+    started = await ready;
+  } catch (err) {
+    child.kill("SIGKILL");
+    await cleanup();
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!started) {
+    await cleanup();
+    return null;
+  }
+
+  wireShutdown(child);
+  return { clientConfig, exited, cleanup };
+}
+
+runScript("Hysteria server", async () => {
+  const provided = parseServerConfig(process.argv.slice(2));
+  const { cert, key } = await generateCertificate();
+
+  // The cert is port-independent, so reuse it across attempts; only the port
+  // pick + bind races, and a fresh port sidesteps a collision.
+  let started: StartedServer | null = null;
+  for (let attempt = 1; attempt <= MAX_START_ATTEMPTS && started === null; attempt += 1) {
+    started = await attemptStart(provided, cert, key);
+    if (started === null && attempt < MAX_START_ATTEMPTS) {
+      console.error(
+        `hysteria exited before startup; retrying (attempt ${attempt + 1}/${MAX_START_ATTEMPTS})`,
+      );
+    }
+  }
+  if (started === null) {
+    throw new Error(`hysteria exited before startup after ${MAX_START_ATTEMPTS} attempts`);
+  }
+
+  const { clientConfig, exited, cleanup } = started;
   let exitCode: number;
   try {
-    exitCode = await runServer({ child, clientConfig });
+    process.stdout.write(`${JSON.stringify(clientConfig)}\n`);
+    exitCode = await exited;
   } finally {
     await cleanup();
   }

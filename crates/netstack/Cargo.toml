@@ -1,5 +1,5 @@
 [package]
-name = "netstack-smoltcp-socket"
+name = "netstack"
 edition.workspace = true
 license.workspace = true
 
