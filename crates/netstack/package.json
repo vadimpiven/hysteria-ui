@@ -1,5 +1,5 @@
 {
-  "name": "netstack-smoltcp-socket",
+  "name": "netstack",
   "private": true,
   "scripts": {
     "test:nextest": "node ../../scripts/test-nextest.ts",

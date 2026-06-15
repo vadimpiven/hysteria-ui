@@ -3,7 +3,7 @@ packages:
   - crates/conn-error
   - crates/dataplane
   - crates/hysteria
-  - crates/netstack-smoltcp-socket
+  - crates/netstack
   - crates/profile
   - crates/transport-socks5
   - crates/transport-tun

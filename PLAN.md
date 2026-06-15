@@ -63,7 +63,7 @@ copyleft); `cargo-deny` enforces that set. The UI runtime is not purely permissi
      store/       JSON doc + SecureStore (secrets)
      conn-error/  connect-error enum (leaf)
      hysteria/    Hysteria 2 client on Quinn: auth + TCP + UDP + Brutal
-     netstack-smoltcp-socket/  socket-style API over smoltcp + tun-rs fd
+     netstack/  socket-style API over smoltcp + tun-rs fd
      dataplane/   relays flows through hysteria/ (UDP NAT, counters)
      model/       the Model: async actor — snapshots + intents
    ffi-app/  ffi-ext/   two UniFFI components (disjoint deps; the app/ext wall)
@@ -307,7 +307,7 @@ hysteria-ui/
     store/                 # JSON doc + SecureStore trait DEFINED here; deps: profile
     conn-error/            # connect-error enum; leaf (only thiserror); crosses the app/ext wall
     hysteria/              # Hysteria 2 client on Quinn (mods: transport, auth, proxy, frag, obfs, brutal); builds the client from &profile::Profile
-    netstack-smoltcp-socket/  # socket-style API over smoltcp + tun-rs fd; no hysteria dep
+    netstack/  # socket-style API over smoltcp + tun-rs fd; no hysteria dep
     dataplane/             # relays through the hysteria client (ext-only); UDP NAT, counters
     transport-tun/            # dev TUN-harness binary over dataplane/ (the transport-socks5 counterpart); never linked into any ffi-* lib
     model/                 # the Model: async serialized actor; sole app-side facade; state + stats snapshots; intents (app-only)
@@ -364,10 +364,10 @@ hysteria-ui/
   the seam clean leaves the door open to shipping it more widely later (e.g. a pure-Rust
   native-messaging host that a browser extension points `chrome.proxy` at — bypassing UniFFI and
   the JVM entirely); out of v1 scope, an invariant to preserve.
-- `netstack-smoltcp-socket/` — a socket-style API over `netstack-smoltcp` (§3.2) plus a `tun-rs`
+- `netstack/` — a socket-style API over `netstack-smoltcp` (§3.2) plus a `tun-rs`
   fd: builds the smoltcp stack, pumps packets between the TUN device and the netstack, and hands
   back accepted TCP flows plus a UDP socket. Transport-agnostic — no `hysteria` dependency.
-- `dataplane/` — drives the `hysteria` client over `netstack-smoltcp-socket`: relay each accepted
+- `dataplane/` — drives the `hysteria` client over `netstack`: relay each accepted
   TCP flow to `hysteria::tcp` and NAT UDP over a `hysteria` UDP session, copying bytes both ways.
   Among shipped libs, ext-only (a separate dev TUN harness drives it too). Counts traffic at the
   netstack↔hysteria seam for the stats snapshot.
@@ -408,7 +408,7 @@ ServerUnreachable | Timeout | Unknown`; a rejected certificate folds into `Serve
   contract is additive-only and versioned; every snapshot carries a `schema_version`.
 
 Crate dependency DAG (must stay acyclic): `profile` (serde-only) and `conn-error` are sinks.
-`config → profile`; `store → profile`; `hysteria → profile, conn-error`; `dataplane → hysteria, netstack-smoltcp-socket,
+`config → profile`; `store → profile`; `hysteria → profile, conn-error`; `dataplane → hysteria, netstack,
 profile, conn-error`; `model → config, store, conn-error, profile` (never `dataplane`/`hysteria`);
 `ffi-app → model`; `ffi-ext → dataplane, store, conn-error, profile`. `ffi-ext`
 must never reach `config` or `model` — enforced by Cargo deps plus a `cargo tree` assertion (a
@@ -442,7 +442,7 @@ through the `transport-socks5` front-end and a dev TUN harness (§5) against a m
    the riskiest path). Conformance against the mise-managed pinned reference server (rev `c3a806b`):
    `curl` over TCP and `dig` over UDP, with and without obfs, trusting the server's self-signed cert
    out of band (the `--ca` path; §7.3).
-2. Userspace TUN, standalone — `dataplane/` (netstack-smoltcp-socket plus tun-rs), exercised by its
+2. Userspace TUN, standalone — `dataplane/` (netstack plus tun-rs), exercised by its
    own dev TUN-harness binary (the counterpart to `transport-socks5`): on macOS open a utun via raw
    fd as root — no NE, no FFI — feed packets through the netstack into the proven `hysteria` client.
    Validates the netstack end-to-end against the same local server; counts bytes at the

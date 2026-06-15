@@ -364,7 +364,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "hysteria",
- "netstack-smoltcp-socket",
+ "netstack",
  "pretty_assertions",
  "tokio",
 ]
@@ -1009,6 +1009,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "netstack"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "netstack-smoltcp",
+ "tokio",
+ "tun-rs",
+]
+
+[[package]]
 name = "netstack-smoltcp"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1022,17 +1033,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "netstack-smoltcp-socket"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "futures",
- "netstack-smoltcp",
- "tokio",
- "tun-rs",
 ]
 
 [[package]]
