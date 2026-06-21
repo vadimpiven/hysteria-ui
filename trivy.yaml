@@ -6,6 +6,7 @@ scan:
   skip-dirs:
     - ".cache"
     - ".venv"
+    - "bindings"
     - "external"
     - "node_modules"
     - "target"
