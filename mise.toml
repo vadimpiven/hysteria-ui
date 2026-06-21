@@ -747,23 +747,6 @@ depends = [
     "build:transport-tun",
 ]
 
-# Generate the Kotlin bindings from ffi-app's built cdylib (UniFFI library
-# mode). Generation is a post-compile step — it reads the metadata embedded in
-# the finished cdylib — so it lives here, not in a build.rs (which runs *during*
-# that compile and cannot see its own output). The shipped app's Gradle build
-# will run the same uniffi-bindgen step; this task is the CLI/CI equivalent.
-[tasks."gen:kotlin"]
-description = "Generate Kotlin bindings for ffi-app (UniFFI library mode)"
-depends = ["setup:rust"]
-run = """
-cargo build -p ffi-app
-lib=$(ls target/debug/libffi_app.dylib target/debug/libffi_app.so target/debug/ffi_app.dll 2>/dev/null | head -n1)
-if [ -z "$lib" ]; then echo "ffi-app cdylib not found in target/debug" >&2; exit 1; fi
-cargo run -q -p uniffi-bindgen -- generate --library "$lib" --language kotlin --out-dir bindings/kotlin --no-format
-"""
-sources = ["crates/ffi-app/**/*.rs", "crates/uniffi-bindgen/**/*.rs"]
-outputs = ["bindings/kotlin/**/*.kt"]
-
 # --- Test tasks ---
 [tasks."test:config"]
 description = "Run tests for config crate"
