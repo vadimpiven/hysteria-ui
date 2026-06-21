@@ -25,9 +25,8 @@
 //! struct NoStats; impl StatsObserver for NoStats { fn on_stats(&self, _: Stats) {} }
 //! struct NoTunnel; impl TunnelControl for NoTunnel { fn start(&self, _: &str) {} fn stop(&self) {} }
 //!
-//! let path = std::env::temp_dir().join("model-doctest.json");
-//! let _ = std::fs::remove_file(&path); // fresh store for a repeatable doctest
-//! let store = store::Store::new(path, store::DevSecureStore::new()).unwrap();
+//! let dir = tempfile::tempdir().unwrap(); // hermetic per-run store
+//! let store = store::Store::new(dir.path().join("profiles.json"), store::DevSecureStore::new()).unwrap();
 //! let (tx, rx) = mpsc::channel();
 //! let model = Model::new(store, Box::new(NoTunnel), Box::new(Obs(tx)), Box::new(NoStats));
 //! let initial = rx.recv().unwrap();
@@ -328,11 +327,17 @@ fn apply_intent<S: SecureStore>(
             state.entries = store.list().to_vec();
         },
         Intent::DeleteProfile(id) => {
-            if store.delete(&id).is_err() {
-                state.last_error = Some("Couldn't delete that profile.".to_string());
-            }
-            if state.selected_id.as_deref() == Some(id.as_str()) {
-                state.selected_id = None;
+            match store.delete(&id) {
+                // Only drop the selection if the profile is actually gone; a
+                // failed delete leaves it in the list, so it stays selectable.
+                Ok(_) => {
+                    if state.selected_id.as_deref() == Some(id.as_str()) {
+                        state.selected_id = None;
+                    }
+                },
+                Err(_) => {
+                    state.last_error = Some("Couldn't delete that profile.".to_string());
+                },
             }
             state.entries = store.list().to_vec();
         },

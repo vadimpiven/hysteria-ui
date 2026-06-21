@@ -196,7 +196,11 @@ struct StatsGate(StatsSlot);
 
 impl model::StatsObserver for StatsGate {
     fn on_stats(&self, stats: model::Stats) {
-        if let Some(observer) = lock(&self.0).as_ref() {
+        // Clone the subscriber out and release the lock *before* calling it: a
+        // foreign on_stats that re-enters (e.g. unsubscribe_stats) would
+        // otherwise deadlock on this same non-reentrant mutex.
+        let observer = lock(&self.0).as_ref().map(Arc::clone);
+        if let Some(observer) = observer {
             observer.on_stats(stats.into());
         }
     }
