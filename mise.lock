@@ -360,6 +360,70 @@ checksum = "sha256:23cb60a1354eed6bcc8d9b9735e8c7b388cd1fdcb75726b93bc299ef22dd9
 url = "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-windows-amd64.exe"
 provenance = "github-attestations"
 
+[[tools."aqua:pinterest/ktlint"]]
+version = "1.8.0"
+backend = "aqua:pinterest/ktlint"
+
+[tools."aqua:pinterest/ktlint"."platforms.linux-arm64"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[tools."aqua:pinterest/ktlint"."platforms.linux-arm64-musl"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[tools."aqua:pinterest/ktlint"."platforms.linux-x64"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[tools."aqua:pinterest/ktlint"."platforms.linux-x64-musl"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[tools."aqua:pinterest/ktlint"."platforms.macos-arm64"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[tools."aqua:pinterest/ktlint"."platforms.macos-x64"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[tools."aqua:pinterest/ktlint"."platforms.windows-arm64"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[tools."aqua:pinterest/ktlint"."platforms.windows-x64"]
+checksum = "sha256:3722801dd119b96a2fbeda0b9d66f173994f249998c87bcf2274b51977aa8f77"
+url = "https://github.com/ktlint/ktlint/releases/download/1.8.0/ktlint-1.8.0.zip"
+
+[[tools."aqua:realm/SwiftLint"]]
+version = "0.63.3"
+backend = "aqua:realm/SwiftLint"
+
+[tools."aqua:realm/SwiftLint"."platforms.linux-arm64"]
+checksum = "sha256:d5efcbed5ec1ca9eb7f833dfdd9f80f56289750b72582c7c1686b4528e182454"
+url = "https://github.com/realm/SwiftLint/releases/download/0.63.3/swiftlint_linux_arm64.zip"
+
+[tools."aqua:realm/SwiftLint"."platforms.linux-arm64-musl"]
+checksum = "sha256:d5efcbed5ec1ca9eb7f833dfdd9f80f56289750b72582c7c1686b4528e182454"
+url = "https://github.com/realm/SwiftLint/releases/download/0.63.3/swiftlint_linux_arm64.zip"
+
+[tools."aqua:realm/SwiftLint"."platforms.linux-x64"]
+checksum = "sha256:26db741d43f2f2dc26c0cf16911100a3e186c3d1dbb59e55ad3ac87b0de4538f"
+url = "https://github.com/realm/SwiftLint/releases/download/0.63.3/swiftlint_linux_amd64.zip"
+
+[tools."aqua:realm/SwiftLint"."platforms.linux-x64-musl"]
+checksum = "sha256:26db741d43f2f2dc26c0cf16911100a3e186c3d1dbb59e55ad3ac87b0de4538f"
+url = "https://github.com/realm/SwiftLint/releases/download/0.63.3/swiftlint_linux_amd64.zip"
+
+[tools."aqua:realm/SwiftLint"."platforms.macos-arm64"]
+checksum = "sha256:fb045e85e7cb3374f42a4840b6b85a0106302afa69035c0c6f29af4a44c810b6"
+url = "https://github.com/realm/SwiftLint/releases/download/0.63.3/portable_swiftlint.zip"
+
+[tools."aqua:realm/SwiftLint"."platforms.macos-x64"]
+checksum = "sha256:fb045e85e7cb3374f42a4840b6b85a0106302afa69035c0c6f29af4a44c810b6"
+url = "https://github.com/realm/SwiftLint/releases/download/0.63.3/portable_swiftlint.zip"
+
 [[tools."aqua:rhysd/actionlint"]]
 version = "1.7.12"
 backend = "aqua:rhysd/actionlint"
@@ -464,15 +528,13 @@ backend = "github:apernet/hysteria"
 asset_pattern = "hysteria-linux-arm64"
 version_prefix = "app/v"
 
-[tools."github:apernet/hysteria"."platforms.linux-arm64"]
-checksum = "sha256:9ec8f49f4ea554b1cac04e6f3690cea76ff835082e943e54196d7f323fcfba71"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-arm64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641765"
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
 
-[tools."github:apernet/hysteria"."platforms.linux-arm64-musl"]
-checksum = "sha256:9ec8f49f4ea554b1cac04e6f3690cea76ff835082e943e54196d7f323fcfba71"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-arm64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641765"
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-linux-amd64"
+version_prefix = "app/v"
 
 [[tools."github:apernet/hysteria"]]
 version = "2.9.2"
@@ -482,10 +544,13 @@ backend = "github:apernet/hysteria"
 asset_pattern = "hysteria-windows-arm64.exe"
 version_prefix = "app/v"
 
-[tools."github:apernet/hysteria"."platforms.windows-arm64"]
-checksum = "sha256:668d8d36650df0bd0c26b606ed6cf45e9dfb22e63b276e72e3d33fc345c9635d"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-windows-arm64.exe"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641752"
+[[tools."github:apernet/hysteria"]]
+version = "2.9.2"
+backend = "github:apernet/hysteria"
+
+[tools."github:apernet/hysteria".options]
+asset_pattern = "hysteria-windows-amd64.exe"
+version_prefix = "app/v"
 
 [[tools."github:apernet/hysteria"]]
 version = "2.9.2"
@@ -495,41 +560,46 @@ backend = "github:apernet/hysteria"
 asset_pattern = "hysteria-darwin-amd64"
 version_prefix = "app/v"
 
-[tools."github:apernet/hysteria"."platforms.macos-x64"]
-checksum = "sha256:226363d1ad1f44c978f4ee052e45196589fc6eefa21c9646b3c27ef89122d172"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-darwin-amd64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641773"
+[[tools."github:detekt/detekt"]]
+version = "1.23.8"
+backend = "github:detekt/detekt"
 
-[[tools."github:apernet/hysteria"]]
-version = "2.9.2"
-backend = "github:apernet/hysteria"
+[tools."github:detekt/detekt".options]
+asset_pattern = "detekt-cli-*.zip"
+version_prefix = "v"
 
-[tools."github:apernet/hysteria".options]
-asset_pattern = "hysteria-linux-amd64"
-version_prefix = "app/v"
+[tools."github:detekt/detekt"."platforms.linux-arm64"]
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
 
-[tools."github:apernet/hysteria"."platforms.linux-x64"]
-checksum = "sha256:86fef8e2f1b2bf41318ac96724eee6c3b449e4e510022cc89658b63a6713922a"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-amd64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641763"
+[tools."github:detekt/detekt"."platforms.linux-arm64-musl"]
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
 
-[tools."github:apernet/hysteria"."platforms.linux-x64-musl"]
-checksum = "sha256:86fef8e2f1b2bf41318ac96724eee6c3b449e4e510022cc89658b63a6713922a"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-amd64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641763"
+[tools."github:detekt/detekt"."platforms.linux-x64"]
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
 
-[[tools."github:apernet/hysteria"]]
-version = "2.9.2"
-backend = "github:apernet/hysteria"
+[tools."github:detekt/detekt"."platforms.linux-x64-musl"]
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
 
-[tools."github:apernet/hysteria".options]
-asset_pattern = "hysteria-windows-amd64.exe"
-version_prefix = "app/v"
+[tools."github:detekt/detekt"."platforms.macos-arm64"]
+checksum = "blake3:2eb4ed043ac0a781ccc01afc409d797ec4d9f247395b82cdc18e2b4e411af6af"
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
 
-[tools."github:apernet/hysteria"."platforms.windows-x64"]
-checksum = "sha256:103c7258384d0ebbf0d19ca4bec50d6cb9b0b7be33f5b76f004fed0a8805ff9f"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-windows-amd64.exe"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641751"
+[tools."github:detekt/detekt"."platforms.macos-x64"]
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
+
+[tools."github:detekt/detekt"."platforms.windows-arm64"]
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
+
+[tools."github:detekt/detekt"."platforms.windows-x64"]
+url = "https://github.com/detekt/detekt/releases/download/v1.23.8/detekt-cli-1.23.8.zip"
+url_api = "https://api.github.com/repos/detekt/detekt/releases/assets/231650829"
 
 [[tools."github:mikefarah/yq"]]
 version = "4.53.2"
@@ -600,58 +670,14 @@ version = "0.12.0"
 backend = "github:mozilla/sccache"
 
 [tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-x86_64-unknown-linux-musl.tar.gz"
-
-[tools."github:mozilla/sccache"."platforms.linux-x64"]
-checksum = "sha256:b0e89ead6899224a4ba2b90e9073bf1ce036d95bab30f3dc33c1e1468bc4ad44"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639997"
-
-[tools."github:mozilla/sccache"."platforms.linux-x64-musl"]
-checksum = "sha256:b0e89ead6899224a4ba2b90e9073bf1ce036d95bab30f3dc33c1e1468bc4ad44"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639997"
-
-[[tools."github:mozilla/sccache"]]
-version = "0.12.0"
-backend = "github:mozilla/sccache"
-
-[tools."github:mozilla/sccache".options]
 asset_pattern = "sccache-v*-aarch64-unknown-linux-musl.tar.gz"
 
-[tools."github:mozilla/sccache"."platforms.linux-arm64"]
-checksum = "sha256:111ddd28fb108cb3e17edb69ab62cefe1dcc97b02e5006ff9c1330f4f2e78368"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639973"
-
-[tools."github:mozilla/sccache"."platforms.linux-arm64-musl"]
-checksum = "sha256:111ddd28fb108cb3e17edb69ab62cefe1dcc97b02e5006ff9c1330f4f2e78368"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639973"
-
 [[tools."github:mozilla/sccache"]]
 version = "0.12.0"
 backend = "github:mozilla/sccache"
 
 [tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-x86_64-apple-darwin.tar.gz"
-
-[tools."github:mozilla/sccache"."platforms.macos-x64"]
-checksum = "sha256:398438425a0e25a40157984189fdaf2d2d0d1f3788cf06d49da2702a41e80c4b"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-apple-darwin.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639987"
-
-[[tools."github:mozilla/sccache"]]
-version = "0.12.0"
-backend = "github:mozilla/sccache"
-
-[tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-aarch64-pc-windows-msvc.tar.gz"
-
-[tools."github:mozilla/sccache"."platforms.windows-arm64"]
-checksum = "sha256:5d99dfc3552907596de7e912432e49fd627eef0fb63b27b777c21db135bb1795"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-pc-windows-msvc.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639969"
+asset_pattern = "sccache-v*-x86_64-unknown-linux-musl.tar.gz"
 
 [[tools."github:mozilla/sccache"]]
 version = "0.12.0"
@@ -660,10 +686,19 @@ backend = "github:mozilla/sccache"
 [tools."github:mozilla/sccache".options]
 asset_pattern = "sccache-v*-x86_64-pc-windows-msvc.tar.gz"
 
-[tools."github:mozilla/sccache"."platforms.windows-x64"]
-checksum = "sha256:f430e63e3f47dd76d488fc6d14a97b4bb58e4fabb18aab69c43198a68e750b91"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-pc-windows-msvc.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639993"
+[[tools."github:mozilla/sccache"]]
+version = "0.12.0"
+backend = "github:mozilla/sccache"
+
+[tools."github:mozilla/sccache".options]
+asset_pattern = "sccache-v*-aarch64-pc-windows-msvc.tar.gz"
+
+[[tools."github:mozilla/sccache"]]
+version = "0.12.0"
+backend = "github:mozilla/sccache"
+
+[tools."github:mozilla/sccache".options]
+asset_pattern = "sccache-v*-x86_64-apple-darwin.tar.gz"
 
 [[tools."github:mstange/samply"]]
 version = "0.13.1"
@@ -766,6 +801,20 @@ checksum = "sha256:fb865364e50c15e7be084f84f18e15dde96c6b0d8022cc7d6445f2a3761cd
 url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.136/cargo-nextest-0.9.136-x86_64-pc-windows-msvc.zip"
 url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/422178744"
 provenance = "github-attestations"
+
+[[tools."github:nicklockwood/SwiftFormat"]]
+version = "0.61.1"
+backend = "github:nicklockwood/SwiftFormat"
+
+[tools."github:nicklockwood/SwiftFormat"."platforms.linux-x64-musl"]
+checksum = "sha256:7bc8706e3fd51963f1f29eb99098ebdf482f3497fa527c68e6cf75cbee29c77a"
+url = "https://github.com/nicklockwood/SwiftFormat/releases/download/0.61.1/swiftformat_linux.zip"
+url_api = "https://api.github.com/repos/nicklockwood/SwiftFormat/releases/assets/406639796"
+
+[tools."github:nicklockwood/SwiftFormat"."platforms.macos-arm64"]
+checksum = "sha256:b990400779aceb7d7020796eb9ba814d4480543f671d38fc0ff48cb72f04c584"
+url = "https://github.com/nicklockwood/SwiftFormat/releases/download/0.61.1/swiftformat.zip"
+url_api = "https://api.github.com/repos/nicklockwood/SwiftFormat/releases/assets/406639783"
 
 [[tools."github:taiki-e/cargo-llvm-cov"]]
 version = "0.8.7"

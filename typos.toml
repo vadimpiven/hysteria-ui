@@ -1,6 +1,6 @@
 [files]
-# `external/` holds pinned git submodules.
-extend-exclude = ["*.lock", "pnpm-lock.yaml", "external/"]
+# `bindings/` is generated UniFFI output; `external/` holds pinned git submodules.
+extend-exclude = ["*.lock", "pnpm-lock.yaml", "bindings/", "external/"]
 
 [default.extend-words]
 # "hel" is a deliberate UDP fragment of "hello" in frag.rs's split test (the

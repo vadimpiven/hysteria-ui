@@ -316,7 +316,7 @@ hysteria-ui/
     transport-socks5/         # standalone SOCKS5 front-end over the hysteria client (also the protocol conformance harness); deps: hysteria, config; never linked into any ffi-* lib
   fuzz/                    # cargo-fuzz targets (config parser); EXCLUDED from the workspace (own nightly target)
   testdata/                # mise-managed: pinned reference Hysteria 2 server (rev c3a806b) + self-signed cert (trusted out of band in tests) + known auth; the conformance fixture
-  bindings/                # generated + committed: UniFFI Kotlin + Swift bindings; the workspace produces, ui/ + apple/ consume
+  bindings/                # generated (gitignored): UniFFI Kotlin + Swift bindings, produced at build time by uniffi-bindgen (Gradle / the uniffi-bindgen bin); ui/ + apple/ consume
   ui/                      # ONE Compose Multiplatform (Kotlin/Gradle) project: shared View + platform heads (Android, Android TV, desktop JVM)
   apple/                   # Swift NE system extension + packaging (desktop host app embeds + signs it)
   android/                 # VpnService glue (in the Kotlin Android head) + packaging (later)

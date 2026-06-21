@@ -1,2 +1,4 @@
+# Generated UniFFI bindings.
+bindings/
 # Pinned upstream sources.
 external/

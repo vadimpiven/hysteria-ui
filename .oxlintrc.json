@@ -1,5 +1,5 @@
 {
-  "ignorePatterns": ["external/**"],
+  "ignorePatterns": ["bindings/**", "external/**"],
   "rules": {
     "typescript/no-deprecated": "error"
   }

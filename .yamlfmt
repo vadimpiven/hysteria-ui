@@ -3,6 +3,7 @@
 # CreateFile error in 0.21.0 when the doublestar glob is passed to the
 # native walker as a literal path.
 exclude:
+  - bindings
   - external
   - .cache
   - node_modules

@@ -13,6 +13,9 @@ node_modules/
 target/
 __pycache__/
 
+# Generated UniFFI bindings — produced at build time (Gradle / the uniffi-bindgen bin), not committed.
+/bindings/
+
 # .cache
 .cache/**
 !.cache/
