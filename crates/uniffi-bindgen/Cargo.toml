@@ -1,0 +1,18 @@
+[package]
+name = "uniffi-bindgen"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+# The bindings generator, pinned to the workspace UniFFI version so library-mode
+# generation matches the scaffolding `ffi-app`/`ffi-ext` embed. Dev tool only —
+# the `cli` feature (clap etc.) never reaches the shipped FFI cdylibs, which are
+# built with `-p ffi-app`/`-p ffi-ext`.
+uniffi = { workspace = true, features = ["cli"] }

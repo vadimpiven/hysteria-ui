@@ -139,11 +139,13 @@ exceptions = [
     # scoped to its crates rather than allowed globally (PLAN §7). We edit none
     # of its files; using it imposes no copyleft on our sources.
     { allow = ["MPL-2.0"], crate = "uniffi" },
+    { allow = ["MPL-2.0"], crate = "uniffi_bindgen" },
     { allow = ["MPL-2.0"], crate = "uniffi_core" },
     { allow = ["MPL-2.0"], crate = "uniffi_internal_macros" },
     { allow = ["MPL-2.0"], crate = "uniffi_macros" },
     { allow = ["MPL-2.0"], crate = "uniffi_meta" },
     { allow = ["MPL-2.0"], crate = "uniffi_pipeline" },
+    { allow = ["MPL-2.0"], crate = "uniffi_udl" },
 ]
 
 # Some crates don't have (easily) machine readable licensing information,
