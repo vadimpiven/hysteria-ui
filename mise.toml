@@ -77,6 +77,19 @@ os = ["linux", "macos"]
 version = "0.61.1"
 os = ["macos"]
 
+# Swift linter for apple/. macOS only, same reason as SwiftFormat.
+[tools."aqua:realm/SwiftLint"]
+version = "0.63.3"
+os = ["macos"]
+
+# Kotlin linter for the Compose UI (ui/). A universal JVM CLI (needs a JDK at
+# run time, like ktlint); the release ships one cross-platform detekt-cli zip.
+[tools."github:detekt/detekt"]
+version = "1.23.8"
+version_prefix = "v"
+asset_pattern = "detekt-cli-*.zip"
+bin = "bin/detekt-cli"
+
 [tools."github:taiki-e/cargo-llvm-cov"]
 version = "0.8.7"
 os = ["linux", "macos"]
