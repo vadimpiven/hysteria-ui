@@ -515,6 +515,13 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/hysteria --if-present run ci-build'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
 
+[tasks."ci-build:model"]
+description = "Build model crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/model --if-present run ci-build'
+sources = ["crates/model/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-build:profile"]
 description = "Build profile crate for CI"
 hide = true
@@ -551,6 +558,7 @@ depends = [
     "ci-build:conn-error",
     "ci-build:transport-socks5",
     "ci-build:hysteria",
+    "ci-build:model",
     "ci-build:profile",
     "ci-build:netstack",
     "ci-build:dataplane",
@@ -585,6 +593,13 @@ hide = true
 depends = ["check"]
 run = 'pnpm -C crates/hysteria --if-present run ci-test'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks."ci-test:model"]
+description = "Run CI tests for model crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/model --if-present run ci-test'
+sources = ["crates/model/**/*", "Cargo.{toml,lock}"]
 
 [tasks."ci-test:profile"]
 description = "Run CI tests for profile crate"
@@ -622,6 +637,7 @@ depends = [
     "ci-test:conn-error",
     "ci-test:transport-socks5",
     "ci-test:hysteria",
+    "ci-test:model",
     "ci-test:profile",
     "ci-test:netstack",
     "ci-test:dataplane",
@@ -656,6 +672,13 @@ hide = true
 depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/hysteria --if-present run build'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks."build:model"]
+description = "Build model crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/model --if-present run build'
+sources = ["crates/model/**/*", "Cargo.{toml,lock}"]
 
 [tasks."build:profile"]
 description = "Build profile crate"
@@ -693,6 +716,7 @@ depends = [
     "build:conn-error",
     "build:transport-socks5",
     "build:hysteria",
+    "build:model",
     "build:profile",
     "build:netstack",
     "build:dataplane",
@@ -727,6 +751,13 @@ hide = true
 depends = ["fix"]
 run = 'pnpm -C crates/hysteria --if-present run test'
 sources = ["crates/hysteria/**/*", "Cargo.{toml,lock}"]
+
+[tasks."test:model"]
+description = "Run tests for model crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/model --if-present run test'
+sources = ["crates/model/**/*", "Cargo.{toml,lock}"]
 
 [tasks."test:profile"]
 description = "Run tests for profile crate"
@@ -764,6 +795,7 @@ depends = [
     "test:conn-error",
     "test:transport-socks5",
     "test:hysteria",
+    "test:model",
     "test:profile",
     "test:netstack",
     "test:dataplane",

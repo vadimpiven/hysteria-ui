@@ -4,6 +4,7 @@ members = [
     "crates/conn-error",
     "crates/dataplane",
     "crates/hysteria",
+    "crates/model",
     "crates/netstack",
     "crates/profile",
     "crates/store",

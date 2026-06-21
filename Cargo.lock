@@ -944,6 +944,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "model"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "config",
+ "conn-error",
+ "pretty_assertions",
+ "profile",
+ "store",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "netconfig-rs"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

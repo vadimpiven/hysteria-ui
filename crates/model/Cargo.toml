@@ -1,0 +1,26 @@
+[package]
+name = "model"
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# hysteria2:// link parse + re-encode (add path, share view).
+config = { path = "../config" }
+# The secret-free connect-error enum mapped to UI sentences.
+conn-error = { path = "../conn-error" }
+# The Profile type (parser output, store input).
+profile = { path = "../profile" }
+# Profile metadata + secret storage (the SecureStore the Model drives).
+store = { path = "../store" }
+# Derive Error/Display for ModelError.
+thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+pretty_assertions.workspace = true
+# The in-memory SecureStore for the actor tests.
+store = { path = "../store", features = ["dev-stub"] }
+tempfile.workspace = true
