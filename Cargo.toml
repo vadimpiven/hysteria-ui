@@ -3,6 +3,7 @@ members = [
     "crates/config",
     "crates/conn-error",
     "crates/dataplane",
+    "crates/ffi-app",
     "crates/hysteria",
     "crates/model",
     "crates/netstack",
@@ -39,9 +40,9 @@ codegen-units = 1
 lto = "thin"
 
 [workspace.lints.rust]
-# Memory safety by construction: no crate may use `unsafe`. The FFI crates
-# (ffi-util/ffi-app/ffi-ext), when added, override this per-crate at the C-ABI
-# boundary — the only place `unsafe` is permitted.
+# Memory safety by construction: no crate may use `unsafe`, including the FFI
+# crates — UniFFI's generated scaffolding keeps its `unsafe` inside the `uniffi`
+# runtime crates, so `ffi-app`/`ffi-ext` compile under `forbid` with no override.
 unsafe_code = "forbid"
 non_ascii_idents = "forbid"
 rust_2018_idioms = { level = "deny", priority = -1 }
@@ -91,8 +92,11 @@ undocumented_unsafe_blocks = "deny"
 
 [workspace.dependencies]
 anyhow = "1.0.102"
+# FFI + Kotlin/Swift bindings from one Rust interface (proc-macro library mode);
+# MPL-2.0, allowed per-crate in deny.toml (see PLAN §7).
 blake2 = "0.10.6"
 bytes = "1.11.1"
+uniffi = "0.29"
 # transport-socks5 CLI.
 clap = { version = "4.5.51", features = ["derive"] }
 # transport-socks5 SOCKS5 server, incl. UDP datagram framing (new_udp_header /

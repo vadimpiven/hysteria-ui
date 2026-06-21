@@ -464,28 +464,13 @@ backend = "github:apernet/hysteria"
 asset_pattern = "hysteria-linux-arm64"
 version_prefix = "app/v"
 
-[tools."github:apernet/hysteria"."platforms.linux-arm64"]
-checksum = "sha256:9ec8f49f4ea554b1cac04e6f3690cea76ff835082e943e54196d7f323fcfba71"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-arm64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641765"
-
-[tools."github:apernet/hysteria"."platforms.linux-arm64-musl"]
-checksum = "sha256:9ec8f49f4ea554b1cac04e6f3690cea76ff835082e943e54196d7f323fcfba71"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-arm64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641765"
-
 [[tools."github:apernet/hysteria"]]
 version = "2.9.2"
 backend = "github:apernet/hysteria"
 
 [tools."github:apernet/hysteria".options]
-asset_pattern = "hysteria-windows-arm64.exe"
+asset_pattern = "hysteria-linux-amd64"
 version_prefix = "app/v"
-
-[tools."github:apernet/hysteria"."platforms.windows-arm64"]
-checksum = "sha256:668d8d36650df0bd0c26b606ed6cf45e9dfb22e63b276e72e3d33fc345c9635d"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-windows-arm64.exe"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641752"
 
 [[tools."github:apernet/hysteria"]]
 version = "2.9.2"
@@ -495,28 +480,13 @@ backend = "github:apernet/hysteria"
 asset_pattern = "hysteria-darwin-amd64"
 version_prefix = "app/v"
 
-[tools."github:apernet/hysteria"."platforms.macos-x64"]
-checksum = "sha256:226363d1ad1f44c978f4ee052e45196589fc6eefa21c9646b3c27ef89122d172"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-darwin-amd64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641773"
-
 [[tools."github:apernet/hysteria"]]
 version = "2.9.2"
 backend = "github:apernet/hysteria"
 
 [tools."github:apernet/hysteria".options]
-asset_pattern = "hysteria-linux-amd64"
+asset_pattern = "hysteria-windows-arm64.exe"
 version_prefix = "app/v"
-
-[tools."github:apernet/hysteria"."platforms.linux-x64"]
-checksum = "sha256:86fef8e2f1b2bf41318ac96724eee6c3b449e4e510022cc89658b63a6713922a"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-amd64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641763"
-
-[tools."github:apernet/hysteria"."platforms.linux-x64-musl"]
-checksum = "sha256:86fef8e2f1b2bf41318ac96724eee6c3b449e4e510022cc89658b63a6713922a"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-linux-amd64"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641763"
 
 [[tools."github:apernet/hysteria"]]
 version = "2.9.2"
@@ -525,11 +495,6 @@ backend = "github:apernet/hysteria"
 [tools."github:apernet/hysteria".options]
 asset_pattern = "hysteria-windows-amd64.exe"
 version_prefix = "app/v"
-
-[tools."github:apernet/hysteria"."platforms.windows-x64"]
-checksum = "sha256:103c7258384d0ebbf0d19ca4bec50d6cb9b0b7be33f5b76f004fed0a8805ff9f"
-url = "https://github.com/apernet/hysteria/releases/download/app/v2.9.2/hysteria-windows-amd64.exe"
-url_api = "https://api.github.com/repos/apernet/hysteria/releases/assets/427641751"
 
 [[tools."github:mikefarah/yq"]]
 version = "4.53.2"
@@ -600,23 +565,6 @@ version = "0.12.0"
 backend = "github:mozilla/sccache"
 
 [tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-x86_64-unknown-linux-musl.tar.gz"
-
-[tools."github:mozilla/sccache"."platforms.linux-x64"]
-checksum = "sha256:b0e89ead6899224a4ba2b90e9073bf1ce036d95bab30f3dc33c1e1468bc4ad44"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639997"
-
-[tools."github:mozilla/sccache"."platforms.linux-x64-musl"]
-checksum = "sha256:b0e89ead6899224a4ba2b90e9073bf1ce036d95bab30f3dc33c1e1468bc4ad44"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639997"
-
-[[tools."github:mozilla/sccache"]]
-version = "0.12.0"
-backend = "github:mozilla/sccache"
-
-[tools."github:mozilla/sccache".options]
 asset_pattern = "sccache-v*-aarch64-unknown-linux-musl.tar.gz"
 
 [tools."github:mozilla/sccache"."platforms.linux-arm64"]
@@ -628,6 +576,23 @@ url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/30663997
 checksum = "sha256:111ddd28fb108cb3e17edb69ab62cefe1dcc97b02e5006ff9c1330f4f2e78368"
 url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-unknown-linux-musl.tar.gz"
 url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639973"
+
+[[tools."github:mozilla/sccache"]]
+version = "0.12.0"
+backend = "github:mozilla/sccache"
+
+[tools."github:mozilla/sccache".options]
+asset_pattern = "sccache-v*-x86_64-unknown-linux-musl.tar.gz"
+
+[tools."github:mozilla/sccache"."platforms.linux-x64"]
+checksum = "sha256:b0e89ead6899224a4ba2b90e9073bf1ce036d95bab30f3dc33c1e1468bc4ad44"
+url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639997"
+
+[tools."github:mozilla/sccache"."platforms.linux-x64-musl"]
+checksum = "sha256:b0e89ead6899224a4ba2b90e9073bf1ce036d95bab30f3dc33c1e1468bc4ad44"
+url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639997"
 
 [[tools."github:mozilla/sccache"]]
 version = "0.12.0"
@@ -646,24 +611,14 @@ version = "0.12.0"
 backend = "github:mozilla/sccache"
 
 [tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-aarch64-pc-windows-msvc.tar.gz"
-
-[tools."github:mozilla/sccache"."platforms.windows-arm64"]
-checksum = "sha256:5d99dfc3552907596de7e912432e49fd627eef0fb63b27b777c21db135bb1795"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-aarch64-pc-windows-msvc.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639969"
+asset_pattern = "sccache-v*-x86_64-pc-windows-msvc.tar.gz"
 
 [[tools."github:mozilla/sccache"]]
 version = "0.12.0"
 backend = "github:mozilla/sccache"
 
 [tools."github:mozilla/sccache".options]
-asset_pattern = "sccache-v*-x86_64-pc-windows-msvc.tar.gz"
-
-[tools."github:mozilla/sccache"."platforms.windows-x64"]
-checksum = "sha256:f430e63e3f47dd76d488fc6d14a97b4bb58e4fabb18aab69c43198a68e750b91"
-url = "https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-x86_64-pc-windows-msvc.tar.gz"
-url_api = "https://api.github.com/repos/mozilla/sccache/releases/assets/306639993"
+asset_pattern = "sccache-v*-aarch64-pc-windows-msvc.tar.gz"
 
 [[tools."github:mstange/samply"]]
 version = "0.13.1"

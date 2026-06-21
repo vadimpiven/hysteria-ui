@@ -543,6 +543,13 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/dataplane --if-present run ci-build'
 sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
 
+[tasks."ci-build:ffi-app"]
+description = "Build ffi-app crate for CI"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/ffi-app --if-present run ci-build'
+sources = ["crates/ffi-app/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-build:transport-tun"]
 description = "Build transport-tun crate for CI"
 hide = true
@@ -562,6 +569,7 @@ depends = [
     "ci-build:profile",
     "ci-build:netstack",
     "ci-build:dataplane",
+    "ci-build:ffi-app",
     "ci-build:transport-tun",
 ]
 
@@ -622,6 +630,13 @@ depends = ["check"]
 run = 'pnpm -C crates/dataplane --if-present run ci-test'
 sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
 
+[tasks."ci-test:ffi-app"]
+description = "Run CI tests for ffi-app crate"
+hide = true
+depends = ["check"]
+run = 'pnpm -C crates/ffi-app --if-present run ci-test'
+sources = ["crates/ffi-app/**/*", "Cargo.{toml,lock}"]
+
 [tasks."ci-test:transport-tun"]
 description = "Run CI tests for transport-tun crate"
 hide = true
@@ -641,6 +656,7 @@ depends = [
     "ci-test:profile",
     "ci-test:netstack",
     "ci-test:dataplane",
+    "ci-test:ffi-app",
     "ci-test:transport-tun",
 ]
 
@@ -701,6 +717,13 @@ depends = ["setup:rust", "setup:pnpm"]
 run = 'pnpm -C crates/dataplane --if-present run build'
 sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
 
+[tasks."build:ffi-app"]
+description = "Build ffi-app crate"
+hide = true
+depends = ["setup:rust", "setup:pnpm"]
+run = 'pnpm -C crates/ffi-app --if-present run build'
+sources = ["crates/ffi-app/**/*", "Cargo.{toml,lock}"]
+
 [tasks."build:transport-tun"]
 description = "Build transport-tun crate"
 hide = true
@@ -720,6 +743,7 @@ depends = [
     "build:profile",
     "build:netstack",
     "build:dataplane",
+    "build:ffi-app",
     "build:transport-tun",
 ]
 
@@ -780,6 +804,13 @@ depends = ["fix"]
 run = 'pnpm -C crates/dataplane --if-present run test'
 sources = ["crates/dataplane/**/*", "Cargo.{toml,lock}"]
 
+[tasks."test:ffi-app"]
+description = "Run tests for ffi-app crate"
+hide = true
+depends = ["fix"]
+run = 'pnpm -C crates/ffi-app --if-present run test'
+sources = ["crates/ffi-app/**/*", "Cargo.{toml,lock}"]
+
 [tasks."test:transport-tun"]
 description = "Run tests for transport-tun crate"
 hide = true
@@ -799,6 +830,7 @@ depends = [
     "test:profile",
     "test:netstack",
     "test:dataplane",
+    "test:ffi-app",
     "test:transport-tun",
 ]
 

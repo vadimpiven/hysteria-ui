@@ -1,0 +1,29 @@
+[package]
+name = "ffi-app"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# cdylib for the JVM (Android .so, desktop .dylib/.dll); staticlib for the
+# Apple slice; lib so the crate can be unit-tested.
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The sole app-side facade this crate exposes over the C ABI.
+model = { path = "../model" }
+# Boundary types: the SecureStore trait/error and the Store the Model opens.
+store = { path = "../store" }
+# Mapping the OS error code fed via on_os_status back to a ConnError.
+conn-error = { path = "../conn-error" }
+# The FFI + Kotlin/Swift binding generator (proc-macro library mode).
+uniffi.workspace = true
+# Derive Error/Display for the FFI error enums.
+thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+pretty_assertions.workspace = true
+tempfile.workspace = true
